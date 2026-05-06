@@ -294,6 +294,9 @@
 // #define ENABLE_DRIVER_MAX6675				1
 // #define ENABLE_DRIVER_TEXTSCROLLER			1
 #define ENABLE_DRIVER_TUYAMCU					1
+// ZCE-BIN v1 driver — Wattel_EM power metering (T1-U-HL / BK7238)
+// Publie trame binaire 41 octets sur MQTT + interface production UART2
+#define ENABLE_DRIVER_ZCE_BIN					1
 // #define ENABLE_DRIVER_HT16K33				1
 // #define ENABLE_DRIVER_MAX72XX				1
 // #define ENABLE_DRIVER_ADCBUTTON				1
@@ -746,3 +749,4 @@
 
 // closing OBK_CONFIG_H
 #endif
+
