@@ -2,7 +2,7 @@
 // drv_zce_bin.c — Driver ZCE-BIN v1 pour OpenBeken
 // Wattel_EM / T1-U-HL (BK7238)
 //
-// Publie une trame binaire de 41 octets toutes les secondes 
+// Publie une trame binaire de 41 octets toutes les secondes
 // sur le topic MQTT : zce/<device_id>/telemetry
 //
 // Device ID construit depuis UUID + model stockés via
@@ -58,9 +58,10 @@
 #include "../driver/drv_public.h"
 #include "../cmnds/cmd_public.h"
 
+// ---- Headers OBK ----
+#include "../new_cfg.h"
+
 // ---- API channels OBK ----
-// Définis dans cmnds/cmd_channels.c, non exposés dans un header public
-// mais utilisés par tous les drivers — déclaration externe directe
 extern int CHANNEL_Get(int index);
 
 // ---- Constantes ZCE-BIN v1 ----
@@ -82,18 +83,6 @@ extern int CHANNEL_Get(int index);
 #define CH_RELAY_CMD    2
 #define CH_ENERGY       3
 
-// ---- Stockage flash : on utilise les flashVars OBK ----
-// OBK expose des "flash string params" via CFG_
-// On utilise les fonctions de config OBK pour stocker UUID et model
-// Déclarations extraites de config/cfg_public.h (non uploadé mais
-// présentes dans tous les builds OBK)
-extern const char* CFG_GetShortName(void);
-extern void CFG_SetShortName(const char* name);
-// Pour le stockage UUID/model on utilise 2 canaux de flashVars
-// OBK a des slots de flashVars (channels persistants > 64)
-// On utilise les channels 70 et 71 comme stockage string via
-// une approche différente : on stocke dans les "user string params"
-// Si non disponible, fallback sur CFG_GetShortName()
 
 // ---- Buffers globaux ----
 static char g_deviceId[PRODUCT_ID_SIZE]   = {0};
@@ -161,7 +150,7 @@ static void buildDeviceId(void) {
     } else {
         // Fallback : utiliser le nom court OBK
         snprintf(g_deviceId, PRODUCT_ID_SIZE,
-                 "ZCE-EM-%s", CFG_GetShortName());
+                 "ZCE-EM-%s", CFG_GetShortDeviceName());
         addLogAdv(LOG_WARN, LOG_FEATURE_MAIN,
             "ZCE_BIN: UUID/model non definis, fallback=%s", g_deviceId);
     }
