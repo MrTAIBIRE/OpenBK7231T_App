@@ -2,7 +2,7 @@
 // drv_zce_bin.c — Driver ZCE-BIN v1 pour OpenBeken
 // Wattel_EM / T1-U-HL (BK7238)
 //
-// Publie une trame binaire de 41 octets toutes les secondes
+// Publie une trame binaire de 41 octets toutes les secondes 
 // sur le topic MQTT : zce/<device_id>/telemetry
 //
 // Device ID construit depuis UUID + model stockés via
