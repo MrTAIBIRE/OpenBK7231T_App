@@ -55,7 +55,7 @@
 
 #include "../new_common.h"
 #include "../mqtt/new_mqtt.h"
-#include "../driver/drv_public.h"
+
 #include "../cmnds/cmd_public.h"
 
 // ---- Headers OBK ----
@@ -76,12 +76,23 @@ extern int CHANNEL_Get(int index);
 #define PRODUCT_ID_SIZE     26
 
 // ---- Channels TuyaMCU (configurés dans autoexec.bat) ----
-// linkTuyaMCUOutputToChannel 0x10 bool 1  → relay_state
-// linkTuyaMCUOutputToChannel 0x0B bool 2  → relay_cmd
-// linkTuyaMCUOutputToChannel 0x0D val  3  → energy (Wh)
+// Exemple autoexec.bat :
+//   linkTuyaMCUOutputToChannel 0x10 bool 1   → relay_state
+//   linkTuyaMCUOutputToChannel 0x0B bool 2   → relay_cmd
+//   linkTuyaMCUOutputToChannel 0x0D val  3   → energy (Wh)
+//   linkTuyaMCUOutputToChannel 0x74 val  4   → voltage (V×10)
+//   linkTuyaMCUOutputToChannel 0x75 val  5   → current (A×1000)
+//   linkTuyaMCUOutputToChannel 0x76 val  6   → power (W×10)
+//   linkTuyaMCUOutputToChannel 0x68 val  7   → power factor (PF×1000)
+//   linkTuyaMCUOutputToChannel 0x69 val  8   → frequency (Hz×10)
 #define CH_RELAY_STATE  1
 #define CH_RELAY_CMD    2
 #define CH_ENERGY       3
+#define CH_VOLTAGE      4
+#define CH_CURRENT      5
+#define CH_POWER        6
+#define CH_POWERFACT    7
+#define CH_FREQ         8
 
 
 // ---- Buffers globaux ----
@@ -172,20 +183,28 @@ static void buildDeviceId(void) {
 static int buildBinaryFrame(uint8_t* frame) {
     memset(frame, 0, ZCE_FRAME_SIZE);
 
-    // --- Lecture des mesures via DRV_GetReading() ---
-    // Retourne float dans les unités SI
-    float voltage    = DRV_GetReading(OBK_VOLTAGE);       // V
-    float current    = DRV_GetReading(OBK_CURRENT);       // A
-    float power      = DRV_GetReading(OBK_POWER);         // W
-    float powerfact  = DRV_GetReading(OBK_POWER_FACTOR);  // 0.0-1.0
-    float frequency  = DRV_GetReading(OBK_FREQUENCY);     // Hz
-
-    // Energie depuis channel TuyaMCU (DP 0x0D = Wh)
-    int energy_wh    = CHANNEL_Get(CH_ENERGY);
-
-    // Relay state/cmd depuis channels TuyaMCU
+    // --- Lecture des mesures via channels TuyaMCU ---
+    // Les channels sont mappés dans autoexec.bat via linkTuyaMCUOutputToChannel
+    // CH_VOLTAGE   (ch 4) : V×10  → diviser par 10.0f
+    // CH_CURRENT   (ch 5) : A×1000 → diviser par 1000.0f
+    // CH_POWER     (ch 6) : W×10  → diviser par 10.0f (ou W×1000 selon DP)
+    // CH_POWERFACT (ch 7) : PF×1000 → diviser par 1000.0f
+    // CH_FREQUENCY (ch 8) : Hz×10 → diviser par 10.0f
+    int v_raw        = CHANNEL_Get(CH_VOLTAGE);      // V×10
+    int i_raw        = CHANNEL_Get(CH_CURRENT);      // A×1000
+    int p_raw        = CHANNEL_Get(CH_POWER);        // W×10
+    int pf_raw       = CHANNEL_Get(CH_POWERFACT);    // PF×1000
+    int f_raw        = CHANNEL_Get(CH_FREQ);         // Hz×10
+    int energy_wh    = CHANNEL_Get(CH_ENERGY);       // Wh
     int relay_state  = CHANNEL_Get(CH_RELAY_STATE);
     int relay_cmd    = CHANNEL_Get(CH_RELAY_CMD);
+
+    // Convertir en float pour les calculs
+    float voltage   = v_raw  / 10.0f;
+    float current   = i_raw  / 1000.0f;
+    float power     = p_raw  / 10.0f;
+    float powerfact = pf_raw / 1000.0f;
+    float frequency = f_raw  / 10.0f;
 
     // --- Flags ---
     uint8_t flags = 0;
