@@ -23,6 +23,7 @@
 #include "drv_ds3231.h"
 #include "drv_hlw8112.h"
 #include "drv_DCF77.h"
+#include "drv_zce_bin.h"
 
 void DRV_MQTTServer_Init();
 void DRV_MQTTServer_AppendInformationToHTTPIndexPage(http_request_t *request, int bPreState);
@@ -74,6 +75,22 @@ static driver_t g_drivers[] = {
 	NULL,                                    // appendInformationToHTTPIndexPage
 	NULL,                                    // runQuickTick
 	NULL,                                    // stopFunction
+	NULL,                                    // onChannelChanged
+	NULL,                                    // onHassDiscovery
+	false,                                   // loaded
+	},
+#endif
+#ifdef ENABLE_DRIVER_ZCE_BIN
+	//drvdetail:{"name":"ZCE_BIN",
+	//drvdetail:"title":"ZCE-BIN v1 Telemetry Driver",
+	//drvdetail:"descr":"Publishes binary ZCE-BIN v1 frames (41 bytes) over MQTT for Wattel_EM power metering devices. Reads TuyaMCU channels (voltage, current, power, power factor, frequency, relay state) and builds the proprietary ZCE-BIN v1 frame every second. Also handles production commands (set_uuid, set_model, get_info, reset) on UART2.",
+	//drvdetail:"requires":"TuyaMCU"}
+	{ "ZCE_BIN",                             // Driver Name
+	ZCE_BIN_Init,                            // Init
+	ZCE_BIN_Every1Second,                    // onEverySecond
+	NULL,                                    // appendInformationToHTTPIndexPage
+	ZCE_BIN_RunQuickTick,                    // runQuickTick (UART2 production serial)
+	ZCE_BIN_Stop,                            // stopFunction
 	NULL,                                    // onChannelChanged
 	NULL,                                    // onHassDiscovery
 	false,                                   // loaded
