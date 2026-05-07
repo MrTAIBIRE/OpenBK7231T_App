@@ -199,13 +199,6 @@ static int buildBinaryFrame(uint8_t* frame) {
     int relay_state  = CHANNEL_Get(CH_RELAY_STATE);
     int relay_cmd    = CHANNEL_Get(CH_RELAY_CMD);
 
-    // Convertir en float pour les calculs
-    float voltage   = v_raw  / 10.0f;
-    float current   = i_raw  / 1000.0f;
-    float power     = p_raw  / 10.0f;
-    float powerfact = pf_raw / 1000.0f;
-    float frequency = f_raw  / 10.0f;
-
     // --- Flags ---
     uint8_t flags = 0;
     // bit0 = relay_state_known, bit1 = relay_state_value
@@ -234,31 +227,26 @@ static int buildBinaryFrame(uint8_t* frame) {
     frame[12] = (ZCE_DATA_LEN >> 8) & 0xFF;
 
     // Voltage uint16 LE V×10 (offsets 13-14)
-    uint16_t v_raw = (uint16_t)(voltage * 10.0f);
-    frame[13] = v_raw & 0xFF;
-    frame[14] = (v_raw >> 8) & 0xFF;
+    frame[13] = (uint8_t)(v_raw & 0xFF);
+    frame[14] = (uint8_t)((v_raw >> 8) & 0xFF);
 
     // Current uint24 LE A×1000 (offsets 15-17)
-    uint32_t i_raw = (uint32_t)(current * 1000.0f);
-    frame[15] = i_raw & 0xFF;
-    frame[16] = (i_raw >> 8) & 0xFF;
-    frame[17] = (i_raw >> 16) & 0xFF;
+    frame[15] = (uint8_t)(i_raw & 0xFF);
+    frame[16] = (uint8_t)((i_raw >> 8) & 0xFF);
+    frame[17] = (uint8_t)((i_raw >> 16) & 0xFF);
 
     // Power uint24 LE W×10 (offsets 18-20)
-    uint32_t p_raw = (uint32_t)(power * 10.0f);
-    frame[18] = p_raw & 0xFF;
-    frame[19] = (p_raw >> 8) & 0xFF;
-    frame[20] = (p_raw >> 16) & 0xFF;
+    frame[18] = (uint8_t)(p_raw & 0xFF);
+    frame[19] = (uint8_t)((p_raw >> 8) & 0xFF);
+    frame[20] = (uint8_t)((p_raw >> 16) & 0xFF);
 
     // PowerFactor uint16 LE PF×1000 (offsets 21-22)
-    uint16_t pf_raw = (uint16_t)(powerfact * 1000.0f);
-    frame[21] = pf_raw & 0xFF;
-    frame[22] = (pf_raw >> 8) & 0xFF;
+    frame[21] = (uint8_t)(pf_raw & 0xFF);
+    frame[22] = (uint8_t)((pf_raw >> 8) & 0xFF);
 
     // Frequency uint16 LE Hz×10 (offsets 23-24)
-    uint16_t f_raw = (uint16_t)(frequency * 10.0f);
-    frame[23] = f_raw & 0xFF;
-    frame[24] = (f_raw >> 8) & 0xFF;
+    frame[23] = (uint8_t)(f_raw & 0xFF);
+    frame[24] = (uint8_t)((f_raw >> 8) & 0xFF);
 
     // Energy uint64 LE Wh×100 (offsets 25-32)
     uint64_t e_raw = (uint64_t)energy_wh * 100ULL;
