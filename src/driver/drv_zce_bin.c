@@ -2,45 +2,28 @@
 // drv_zce_bin.c — Driver ZCE-BIN v1 pour OpenBeken
 // Wattel_EM / T1-U-HL (BK7238)
 //
-// Publie une trame binaire de 41 octets toutes les secondes
-// sur le topic MQTT : zce/<device_id>/telemetry
+// Startup command requis :
+// backlog startDriver TuyaMCU; tuyaMcu_defWiFiState 4;
+// linkTuyaMCUOutputToChannel 0x10 bool 1; setChannelType 1 toggle;
+// linkTuyaMCUOutputToChannel 0x06 RAW_TAC2121C_VCP;
+// setChannelType 2 Voltage_div10;
+// setChannelType 3 Power;
+// setChannelType 4 Current_div1000;
+// linkTuyaMCUOutputToChannel 0x0D val 5; setChannelType 5 EnergyTotal_kWh_div100;
+// linkTuyaMCUOutputToChannel 0x68 val 6;
+// linkTuyaMCUOutputToChannel 0x69 val 7;
+// linkTuyaMCUOutputToChannel 0x0B bool 8;
+// startDriver ZCE_BIN
 //
-// Device ID construit depuis UUID + model stockés via
-// la commande OBK "ZCE_SetUUID" / "ZCE_SetModel"
-// (interface production sur UART2 / console OBK)
-//
-// Format trame ZCE-BIN v1 (41 octets) :
-//   [0-1]   Magic      0x5A 0xE1
-//   [2]     Version    0x01
-//   [3]     Flags      relay_state/relay_cmd
-//   [4]     Réservé    0x00
-//   [5-10]  MAC        6 octets big-endian
-//   [11-12] Length     uint16 LE = 28
-//   [13-14] Voltage    uint16 LE  V×10
-//   [15-17] Current    uint24 LE  A×1000
-//   [18-20] Power      uint24 LE  W×10
-//   [21-22] PowerFact  uint16 LE  PF×1000
-//   [23-24] Frequency  uint16 LE  Hz×10
-//   [25-32] Energy     uint64 LE  Wh×100
-//   [33-36] Uptime     uint32 LE  secondes
-//   [37-39] Réservé    0x00
-//   [40]    CRC8/SMBUS polynomial 0x07
-//
-// Valeurs lues via DRV_GetReading() (drv_public.h) :
-//   OBK_VOLTAGE      → V
-//   OBK_CURRENT      → A
-//   OBK_POWER        → W
-//   OBK_POWER_FACTOR → sans unité (0.0-1.0)
-//   OBK_FREQUENCY    → Hz
-//
-// Energie lue depuis channel OBK (TuyaMCU DP 0x0D → CH_ENERGY)
-//
-// Relay state/cmd lus depuis channels OBK (TuyaMCU DP 0x10/0x0B)
-//
-// Interface production via commandes OBK (console/MQTT/HTTP) :
-//   ZCE_SetUUID <uuid-36-chars>
-//   ZCE_SetModel <model>
-//   ZCE_GetInfo
+// Mapping channels :
+//   CH 1 → relay_state  (DP 0x10 bool)
+//   CH 2 → tension      (DP 0x06 RAW V×10)
+//   CH 3 → puissance    (DP 0x06 RAW W)
+//   CH 4 → courant      (DP 0x06 RAW A×1000)
+//   CH 5 → energie      (DP 0x0D kWh×100)
+//   CH 6 → power factor (DP 0x68 PF×1000)
+//   CH 7 → frequence    (DP 0x69 Hz×10)
+//   CH 8 → relay_cmd    (DP 0x0B bool)
 // ============================================================
 
 #include "drv_zce_bin.h"
@@ -55,10 +38,7 @@
 
 #include "../new_common.h"
 #include "../mqtt/new_mqtt.h"
-
 #include "../cmnds/cmd_public.h"
-
-// ---- Headers OBK ----
 #include "../new_cfg.h"
 
 // ---- API channels OBK ----
@@ -75,39 +55,25 @@ extern int CHANNEL_Get(int index);
 #define MQTT_TOPIC_PREFIX   "zce"
 #define PRODUCT_ID_SIZE     26
 
-// ---- Channels TuyaMCU (configurés dans autoexec.bat) ----
-// Exemple autoexec.bat :
-//   linkTuyaMCUOutputToChannel 0x10 bool 1   → relay_state
-//   linkTuyaMCUOutputToChannel 0x0B bool 2   → relay_cmd
-//   linkTuyaMCUOutputToChannel 0x0D val  3   → energy (Wh)
-//   linkTuyaMCUOutputToChannel 0x74 val  4   → voltage (V×10)
-//   linkTuyaMCUOutputToChannel 0x75 val  5   → current (A×1000)
-//   linkTuyaMCUOutputToChannel 0x76 val  6   → power (W×10)
-//   linkTuyaMCUOutputToChannel 0x68 val  7   → power factor (PF×1000)
-//   linkTuyaMCUOutputToChannel 0x69 val  8   → frequency (Hz×10)
-#define CH_RELAY_STATE  1
-#define CH_RELAY_CMD    2
-#define CH_ENERGY       3
-#define CH_VOLTAGE      4
-#define CH_CURRENT      5
-#define CH_POWER        6
-#define CH_POWERFACT    7
-#define CH_FREQ         8
-
+// ---- Mapping channels TuyaMCU ----
+#define CH_RELAY_STATE  1   // DP 0x10 bool
+#define CH_VOLTAGE      2   // DP 0x06 RAW V×10
+#define CH_POWER        3   // DP 0x06 RAW W (direct)
+#define CH_CURRENT      4   // DP 0x06 RAW A×1000
+#define CH_ENERGY       5   // DP 0x0D kWh×100
+#define CH_POWERFACT    6   // DP 0x68 PF×1000
+#define CH_FREQ         7   // DP 0x69 Hz×10
+#define CH_RELAY_CMD    8   // DP 0x0B bool
 
 // ---- Buffers globaux ----
-static char g_deviceId[PRODUCT_ID_SIZE]   = {0};
-static char g_topicTelemetry[96]          = {0};
-static char g_uuid[40]                    = {0};
-static char g_model[16]                   = {0};
-static bool g_initialized                 = false;
+static char g_deviceId[PRODUCT_ID_SIZE] = {0};
+static char g_topicTelemetry[96]        = {0};
+static char g_uuid[40]                  = {0};
+static char g_model[16]                 = {0};
+static bool g_initialized               = false;
 
-// MAC lu depuis wifi_bssid (exporté dans new_common.h)
-// Format "AA:BB:CC:DD:EE:FF"
 extern char g_wifi_bssid[33];
-
-// Uptime depuis new_common.h
-extern int g_secondsElapsed;
+extern int  g_secondsElapsed;
 
 // ============================================================
 // CRC8 / SMBUS polynomial 0x07
@@ -146,11 +112,9 @@ static void parseMacStr(const char* macStr, uint8_t* mac) {
 
 // ============================================================
 // Construction du device_id
-// Format : ZCE-<model>-<18 premiers chars UUID sans tirets>
 // ============================================================
 static void buildDeviceId(void) {
     if (g_uuid[0] != '\0' && g_model[0] != '\0') {
-        // Supprimer les tirets de l'UUID
         char uuid_nohyph[33] = {0};
         int j = 0;
         for (int i = 0; g_uuid[i] != '\0' && i < 36 && j < 32; i++) {
@@ -159,7 +123,6 @@ static void buildDeviceId(void) {
         snprintf(g_deviceId, PRODUCT_ID_SIZE,
                  "ZCE-%.4s-%.18s", g_model, uuid_nohyph);
     } else {
-        // Fallback : utiliser le nom court OBK
         snprintf(g_deviceId, PRODUCT_ID_SIZE,
                  "ZCE-EM-%s", CFG_GetShortDeviceName());
         addLogAdv(LOG_WARN, LOG_FEATURE_MAIN,
@@ -167,14 +130,11 @@ static void buildDeviceId(void) {
     }
     g_deviceId[PRODUCT_ID_SIZE - 1] = '\0';
 
-    // Construire le topic telemetry
     snprintf(g_topicTelemetry, sizeof(g_topicTelemetry),
              "%s/%s/telemetry", MQTT_TOPIC_PREFIX, g_deviceId);
 
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
-        "ZCE_BIN: device_id=%s", g_deviceId);
-    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
-        "ZCE_BIN: topic=%s", g_topicTelemetry);
+        "ZCE_BIN: device_id=%s topic=%s", g_deviceId, g_topicTelemetry);
 }
 
 // ============================================================
@@ -183,43 +143,42 @@ static void buildDeviceId(void) {
 static int buildBinaryFrame(uint8_t* frame) {
     memset(frame, 0, ZCE_FRAME_SIZE);
 
-    // --- Lecture des mesures via channels TuyaMCU ---
-    // Les channels sont mappés dans autoexec.bat via linkTuyaMCUOutputToChannel
-    // CH_VOLTAGE   (ch 4) : V×10  → diviser par 10.0f
-    // CH_CURRENT   (ch 5) : A×1000 → diviser par 1000.0f
-    // CH_POWER     (ch 6) : W×10  → diviser par 10.0f (ou W×1000 selon DP)
-    // CH_POWERFACT (ch 7) : PF×1000 → diviser par 1000.0f
-    // CH_FREQUENCY (ch 8) : Hz×10 → diviser par 10.0f
-    int v_raw        = CHANNEL_Get(CH_VOLTAGE);      // V×10
-    int i_raw        = CHANNEL_Get(CH_CURRENT);      // A×1000
-    int p_raw        = CHANNEL_Get(CH_POWER);        // W×10
-    int pf_raw       = CHANNEL_Get(CH_POWERFACT);    // PF×1000
-    int f_raw        = CHANNEL_Get(CH_FREQ);         // Hz×10
-    int energy_wh    = CHANNEL_Get(CH_ENERGY);       // Wh
-    int relay_state  = CHANNEL_Get(CH_RELAY_STATE);
-    int relay_cmd    = CHANNEL_Get(CH_RELAY_CMD);
+    // Lecture des channels TuyaMCU
+    int relay_state = CHANNEL_Get(CH_RELAY_STATE);
+    int v_raw       = CHANNEL_Get(CH_VOLTAGE);     // V×10
+    int p_w         = CHANNEL_Get(CH_POWER);        // W direct
+    int i_raw       = CHANNEL_Get(CH_CURRENT);      // A×1000
+    int energy_kwh100 = CHANNEL_Get(CH_ENERGY);     // kWh×100
+    int pf_raw      = CHANNEL_Get(CH_POWERFACT);    // PF×1000
+    int f_raw       = CHANNEL_Get(CH_FREQ);         // Hz×10
+    int relay_cmd   = CHANNEL_Get(CH_RELAY_CMD);
 
-    // --- Flags ---
+    // Conversion puissance : W → W×10 pour la trame
+    int p_raw = p_w * 10;
+
+    // Conversion energie : kWh×100 → Wh×100
+    // kWh×100 → Wh = ×1000 → Wh×100 = ×100000
+    uint64_t e_wh100 = (uint64_t)energy_kwh100 * 1000ULL;
+
+    // Flags relay
     uint8_t flags = 0;
-    // bit0 = relay_state_known, bit1 = relay_state_value
-    flags |= (1 << 0);  // toujours connu si TuyaMCU actif
+    flags |= (1 << 0);
     if (relay_state) flags |= (1 << 1);
-    // bit2 = relay_cmd_known, bit3 = relay_cmd_value
     flags |= (1 << 2);
     if (relay_cmd)   flags |= (1 << 3);
 
-    // --- Lecture MAC ---
+    // MAC
     uint8_t mac[6] = {0};
     parseMacStr(g_wifi_bssid, mac);
 
-    // --- Header ---
+    // Header
     frame[0] = ZCE_MAGIC_0;
     frame[1] = ZCE_MAGIC_1;
     frame[2] = ZCE_VERSION;
     frame[3] = flags;
-    frame[4] = 0x00;  // réservé
+    frame[4] = 0x00;
 
-    // MAC big-endian (offsets 5-10)
+    // MAC (offsets 5-10)
     memcpy(&frame[5], mac, 6);
 
     // Length uint16 LE (offsets 11-12)
@@ -249,15 +208,14 @@ static int buildBinaryFrame(uint8_t* frame) {
     frame[24] = (uint8_t)((f_raw >> 8) & 0xFF);
 
     // Energy uint64 LE Wh×100 (offsets 25-32)
-    uint64_t e_raw = (uint64_t)energy_wh * 100ULL;
-    frame[25] = (uint8_t)(e_raw      );
-    frame[26] = (uint8_t)(e_raw >>  8);
-    frame[27] = (uint8_t)(e_raw >> 16);
-    frame[28] = (uint8_t)(e_raw >> 24);
-    frame[29] = (uint8_t)(e_raw >> 32);
-    frame[30] = (uint8_t)(e_raw >> 40);
-    frame[31] = (uint8_t)(e_raw >> 48);
-    frame[32] = (uint8_t)(e_raw >> 56);
+    frame[25] = (uint8_t)(e_wh100      );
+    frame[26] = (uint8_t)(e_wh100 >>  8);
+    frame[27] = (uint8_t)(e_wh100 >> 16);
+    frame[28] = (uint8_t)(e_wh100 >> 24);
+    frame[29] = (uint8_t)(e_wh100 >> 32);
+    frame[30] = (uint8_t)(e_wh100 >> 40);
+    frame[31] = (uint8_t)(e_wh100 >> 48);
+    frame[32] = (uint8_t)(e_wh100 >> 56);
 
     // Uptime uint32 LE secondes (offsets 33-36)
     uint32_t uptime = (uint32_t)g_secondsElapsed;
@@ -266,37 +224,35 @@ static int buildBinaryFrame(uint8_t* frame) {
     frame[35] = (uint8_t)(uptime >> 16);
     frame[36] = (uint8_t)(uptime >> 24);
 
-    // Réservé (offsets 37-39)
+    // Reserved (37-39)
     frame[37] = 0x00;
     frame[38] = 0x00;
     frame[39] = 0x00;
 
-    // CRC8 sur bytes[0..39]
+    // CRC8
     frame[40] = crc8_calc(frame, 40);
+
+    addLogAdv(LOG_DEBUG, LOG_FEATURE_MAIN,
+        "ZCE_BIN: V=%d I=%d P=%d PF=%d F=%d E=%d",
+        v_raw, i_raw, p_w, pf_raw, f_raw, energy_kwh100);
 
     return ZCE_FRAME_SIZE;
 }
 
 // ============================================================
-// Publication MQTT binaire via lwIP mqtt_publish directement
-// mqtt_client est exporté dans new_mqtt.h
+// Publication MQTT binaire
 // ============================================================
 static void publishBinaryFrame(const uint8_t* frame, int len) {
 #if ENABLE_MQTT
     if (!mqtt_client) return;
     if (!Main_HasMQTTConnected()) return;
 
-    // lwIP mqtt_publish(client, topic, payload, payload_len,
-    //                   qos, retain, callback, callback_arg)
     err_t err = mqtt_publish(
         mqtt_client,
         g_topicTelemetry,
         (const void*)frame,
         (u16_t)len,
-        0,    // QoS 0
-        0,    // retain = 0
-        NULL, // no callback
-        NULL  // no callback arg
+        0, 0, NULL, NULL
     );
 
     if (err != ERR_OK) {
@@ -307,17 +263,14 @@ static void publishBinaryFrame(const uint8_t* frame, int len) {
 }
 
 // ============================================================
-// Commandes OBK enregistrées au startDriver
+// Commandes OBK
 // ============================================================
-
-// ZCE_SetUUID <36-char-uuid>
 static commandResult_t ZCE_Cmd_SetUUID(const void* ctx,
     const char* cmd, const char* args, int flags)
 {
     Tokenizer_TokenizeString(args, 0);
-    if (Tokenizer_CheckArgsCountAndPrintWarning(cmd, 1)) {
+    if (Tokenizer_CheckArgsCountAndPrintWarning(cmd, 1))
         return CMD_RES_NOT_ENOUGH_ARGUMENTS;
-    }
     const char* uuid = Tokenizer_GetArg(0);
     if (strlen(uuid) != 36) {
         addLogAdv(LOG_WARN, LOG_FEATURE_MAIN,
@@ -332,16 +285,13 @@ static commandResult_t ZCE_Cmd_SetUUID(const void* ctx,
     return CMD_RES_OK;
 }
 
-// ZCE_SetModel <model>  ex: EM
 static commandResult_t ZCE_Cmd_SetModel(const void* ctx,
     const char* cmd, const char* args, int flags)
 {
     Tokenizer_TokenizeString(args, 0);
-    if (Tokenizer_CheckArgsCountAndPrintWarning(cmd, 1)) {
+    if (Tokenizer_CheckArgsCountAndPrintWarning(cmd, 1))
         return CMD_RES_NOT_ENOUGH_ARGUMENTS;
-    }
-    const char* model = Tokenizer_GetArg(0);
-    strncpy(g_model, model, sizeof(g_model) - 1);
+    strncpy(g_model, Tokenizer_GetArg(0), sizeof(g_model) - 1);
     g_model[sizeof(g_model) - 1] = '\0';
     buildDeviceId();
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
@@ -349,44 +299,40 @@ static commandResult_t ZCE_Cmd_SetModel(const void* ctx,
     return CMD_RES_OK;
 }
 
-// ZCE_GetInfo — affiche dans les logs OBK (visible en console/MQTT)
 static commandResult_t ZCE_Cmd_GetInfo(const void* ctx,
     const char* cmd, const char* args, int flags)
 {
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
         "ZCE_BIN: uuid=%s model=%s device_id=%s topic=%s",
-        g_uuid[0]   ? g_uuid   : "(vide)",
-        g_model[0]  ? g_model  : "(vide)",
-        g_deviceId,
-        g_topicTelemetry);
+        g_uuid[0]  ? g_uuid  : "(vide)",
+        g_model[0] ? g_model : "(vide)",
+        g_deviceId, g_topicTelemetry);
+    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
+        "ZCE_BIN: V=%d I=%d P=%d PF=%d F=%d",
+        CHANNEL_Get(CH_VOLTAGE),
+        CHANNEL_Get(CH_CURRENT),
+        CHANNEL_Get(CH_POWER),
+        CHANNEL_Get(CH_POWERFACT),
+        CHANNEL_Get(CH_FREQ));
     return CMD_RES_OK;
 }
 
 // ============================================================
-// ZCE_BIN_Init — appelé par OBK au startDriver ZCE_BIN
+// ZCE_BIN_Init
 // ============================================================
 void ZCE_BIN_Init(void) {
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_BIN: init");
-
-    // Construire device_id (avec les valeurs déjà en RAM si présentes)
     buildDeviceId();
-
-    // Enregistrer les commandes OBK
-    // → utilisables depuis console web, MQTT cmnd/, HTTP, script
     CMD_RegisterCommand("ZCE_SetUUID",  ZCE_Cmd_SetUUID,  NULL);
     CMD_RegisterCommand("ZCE_SetModel", ZCE_Cmd_SetModel, NULL);
     CMD_RegisterCommand("ZCE_GetInfo",  ZCE_Cmd_GetInfo,  NULL);
-
     g_initialized = true;
-
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
-        "ZCE_BIN: init OK — device_id=%s", g_deviceId);
-    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
-        "ZCE_BIN: cmds dispo: ZCE_SetUUID, ZCE_SetModel, ZCE_GetInfo");
+        "ZCE_BIN: init OK device_id=%s", g_deviceId);
 }
 
 // ============================================================
-// ZCE_BIN_Every1Second — appelé chaque seconde par OBK
+// ZCE_BIN_Every1Second
 // ============================================================
 void ZCE_BIN_Every1Second(void) {
 #if ENABLE_MQTT
@@ -400,16 +346,13 @@ void ZCE_BIN_Every1Second(void) {
 }
 
 // ============================================================
-// ZCE_BIN_RunQuickTick — appelé à chaque loop OBK
-// (rien à faire ici : les commandes passent par CMD_RegisterCommand)
+// ZCE_BIN_RunQuickTick
 // ============================================================
 void ZCE_BIN_RunQuickTick(void) {
-    // Vide : la gestion production passe par les commandes OBK
-    // enregistrées dans ZCE_BIN_Init()
 }
 
 // ============================================================
-// ZCE_BIN_Stop — appelé au stopDriver ZCE_BIN
+// ZCE_BIN_Stop
 // ============================================================
 void ZCE_BIN_Stop(void) {
     g_initialized = false;
@@ -417,3 +360,4 @@ void ZCE_BIN_Stop(void) {
 }
 
 #endif // ENABLE_DRIVER_ZCE_BIN
+
