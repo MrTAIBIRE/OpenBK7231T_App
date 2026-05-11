@@ -1,4 +1,3 @@
-
 //
 // Generic TuyaMCU information
 //
@@ -2093,6 +2092,15 @@ void TuyaMCU_ProcessIncoming(const byte* data, int len) {
 		}
 		else {
 			wifi_state_valid = true;
+			// Reply to MCU with current WiFi state (payload required)
+			// Without this reply, some MCUs (e.g. Wattel EM T1-U-HL) stay
+			// in init mode and do not send real-time measurements.
+			// CBU firmware sent: 55AA000300010407 (status=0x04 connected to cloud)
+			uint8_t wifiStatus = g_defaultTuyaMCUWiFiState;
+			TuyaMCU_SendCommandWithData(TUYA_CMD_WIFI_STATE, &wifiStatus, 1);
+			addLogAdv(LOG_INFO, LOG_FEATURE_TUYAMCU,
+				"ProcessIncoming: TUYA_CMD_WIFI_STATE -> replying with status 0x%02X",
+				(int)wifiStatus);
 		}
 		break;
 	case TUYA_CMD_WIFI_SELECT:
@@ -2891,5 +2899,3 @@ void TuyaMCU_Init()
 /// 55AA 00 08 000C 00 01 01 01 01 01 01 03 04 0001 02 23
 // TP = 0x01    bool    1   Value range: 0x00/0x01.
 // TP = 0x04    enum    1   Enumeration type, ranging from 0 to 255.
-
-
