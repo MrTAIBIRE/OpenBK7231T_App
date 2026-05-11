@@ -2096,11 +2096,13 @@ void TuyaMCU_ProcessIncoming(const byte* data, int len) {
 			// Without this reply, some MCUs (e.g. Wattel EM T1-U-HL) stay
 			// in init mode and do not send real-time measurements.
 			// CBU firmware sent: 55AA000300010407 (status=0x04 connected to cloud)
-			uint8_t wifiStatus = g_defaultTuyaMCUWiFiState;
-			TuyaMCU_SendCommandWithData(TUYA_CMD_WIFI_STATE, &wifiStatus, 1);
-			addLogAdv(LOG_INFO, LOG_FEATURE_TUYAMCU,
-				"ProcessIncoming: TUYA_CMD_WIFI_STATE -> replying with status 0x%02X",
-				(int)wifiStatus);
+			{
+				uint8_t wifiStatus = g_defaultTuyaMCUWiFiState;
+				Tuya_SetWifiState(wifiStatus);
+				addLogAdv(LOG_INFO, LOG_FEATURE_TUYAMCU,
+					"ProcessIncoming: TUYA_CMD_WIFI_STATE -> replying with status 0x%02X",
+					(int)wifiStatus);
+			}
 		}
 		break;
 	case TUYA_CMD_WIFI_SELECT:
@@ -2494,10 +2496,10 @@ void TuyaMCU_RunStateMachine_V3() {
 			}
 			else if ((wifi_state_valid == false) && (self_processing_mode == false))
 			{
-				/* Reset wifi state -> Aquirring network connection */
+				/* Send WiFi state with payload - required by some MCUs (e.g. Wattel EM T1-U-HL) */
+				/* The MCU needs a proper reply with status byte to start sending real-time measurements */
+				addLogAdv(LOG_EXTRADEBUG, LOG_FEATURE_TUYAMCU, "Will send TUYA_CMD_WIFI_STATE with status 0x%02X.", (int)g_defaultTuyaMCUWiFiState);
 				Tuya_SetWifiState(g_defaultTuyaMCUWiFiState);
-				addLogAdv(LOG_EXTRADEBUG, LOG_FEATURE_TUYAMCU, "Will send TUYA_CMD_WIFI_STATE.");
-				TuyaMCU_SendCommandWithData(TUYA_CMD_WIFI_STATE, NULL, 0);
 			}
 			else if (state_updated == false)
 			{
