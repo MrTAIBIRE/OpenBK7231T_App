@@ -1,36 +1,29 @@
 // ============================================================
 // drv_zce_bin.c — Driver ZCE-BIN v1 pour OpenBeken
-// JJMVPD-63LWS / T1-U-HL (BK7238)
+// Wattel_EM / T1-U-HL (BK7238)
 //
-// IMPORTANT pour ce produit :
-// Ne pas utiliser DP 0x06 RAW_TAC2121C_VCP pour V/I/P.
-// Sur le JJMVPD-63LWS, DP 0x06 peut donner une valeur initiale
-// mais les mesures dynamiques sont sur DP 116/117/118.
-//
-// Autoexec recommandé :
+// Startup command requis :
 // backlog startDriver TuyaMCU; tuyaMcu_defWiFiState 4;
-// linkTuyaMCUOutputToChannel 16 bool 1; setChannelType 1 toggle;
-// linkTuyaMCUOutputToChannel 116 val 2; setChannelType 2 Voltage_div10;
-// linkTuyaMCUOutputToChannel 118 val 3; setChannelType 3 Power;
-// linkTuyaMCUOutputToChannel 117 val 4; setChannelType 4 Current_div1000;
-// linkTuyaMCUOutputToChannel 1 val 5; setChannelType 5 EnergyTotal_kWh_div100;
-// linkTuyaMCUOutputToChannel 104 val 6;
-// linkTuyaMCUOutputToChannel 105 val 7;
-// linkTuyaMCUOutputToChannel 11 bool 8;
+// linkTuyaMCUOutputToChannel 0x10 bool 1; setChannelType 1 toggle;
+// linkTuyaMCUOutputToChannel 0x06 RAW_TAC2121C_VCP;
+// setChannelType 2 Voltage_div10;
+// setChannelType 3 Power;
+// setChannelType 4 Current_div1000;
+// linkTuyaMCUOutputToChannel 0x0D val 5; setChannelType 5 EnergyTotal_kWh_div100;
+// linkTuyaMCUOutputToChannel 0x68 val 6;
+// linkTuyaMCUOutputToChannel 0x69 val 7;
+// linkTuyaMCUOutputToChannel 0x0B bool 8;
 // startDriver ZCE_BIN
 //
 // Mapping channels :
-//   CH 1 → relay_state  (DP 16 bool)
-//   CH 2 → tension      (DP 116 val, V×10)
-//   CH 3 → puissance    (DP 118 val, W)
-//   CH 4 → courant      (DP 117 val, A×1000)
-//   CH 5 → energie      (DP 1 val, kWh×100)
-//   CH 6 → power factor (DP 104 val, PF×1000 ou PF×10 selon MCU)
-//   CH 7 → frequence    (DP 105 val, Hz×10)
-//   CH 8 → relay_cmd    (DP 11 bool)
-//
-// Ce driver force aussi un polling TuyaMCU périodique, car certains
-// JJMVPD-63LWS ne poussent pas les mesures en continu après le boot.
+//   CH 1 → relay_state  (DP 0x10 bool)
+//   CH 2 → tension      (DP 0x06 RAW V×10)
+//   CH 3 → puissance    (DP 0x06 RAW W)
+//   CH 4 → courant      (DP 0x06 RAW A×1000)
+//   CH 5 → energie      (DP 0x0D kWh×100)
+//   CH 6 → power factor (DP 0x68 PF×1000)
+//   CH 7 → frequence    (DP 0x69 Hz×10)
+//   CH 8 → relay_cmd    (DP 0x0B bool)
 // ============================================================
 
 #include "drv_zce_bin.h"
@@ -62,19 +55,15 @@ extern int CHANNEL_Get(int index);
 #define MQTT_TOPIC_PREFIX   "zce"
 #define PRODUCT_ID_SIZE     26
 
-// ---- Mapping channels TuyaMCU pour JJMVPD-63LWS ----
-#define CH_RELAY_STATE  1   // DP 16 bool
-#define CH_VOLTAGE      2   // DP 116 val, V×10
-#define CH_POWER        3   // DP 118 val, W direct
-#define CH_CURRENT      4   // DP 117 val, A×1000
-#define CH_ENERGY       5   // DP 1 val, kWh×100
-#define CH_POWERFACT    6   // DP 104 val, PF×1000 ou PF×10 selon firmware MCU
-#define CH_FREQ         7   // DP 105 val, Hz×10
-#define CH_RELAY_CMD    8   // DP 11 bool
-
-// ---- Polling TuyaMCU ----
-#define ZCE_TUYA_QUERY_PERIOD_SECONDS       2
-#define ZCE_TUYA_ENABLE_6A_PERIOD_SECONDS  30
+// ---- Mapping channels TuyaMCU ----
+#define CH_RELAY_STATE  1   // DP 0x10 bool
+#define CH_VOLTAGE      2   // DP 0x06 RAW V×10
+#define CH_POWER        3   // DP 0x06 RAW W (direct)
+#define CH_CURRENT      4   // DP 0x06 RAW A×1000
+#define CH_ENERGY       5   // DP 0x0D kWh×100
+#define CH_POWERFACT    6   // DP 0x68 PF×1000
+#define CH_FREQ         7   // DP 0x69 Hz×10
+#define CH_RELAY_CMD    8   // DP 0x0B bool
 
 // ---- Buffers globaux ----
 static char g_deviceId[PRODUCT_ID_SIZE] = {0};
@@ -82,6 +71,18 @@ static char g_topicTelemetry[96]        = {0};
 static char g_uuid[40]                  = {0};
 static char g_model[16]                 = {0};
 static bool g_initialized               = false;
+static int  g_zce_seconds               = 0;
+
+// The original Tuya Wi-Fi firmware for JIUJI JJMVPD-63LWS sends this command
+// periodically to the MCU:
+//   55 AA 00 06 00 05 6A 01 00 01 01 77
+// It is DP 0x6A / 106, type bool, value true.
+// Without it, some MCU firmwares only report one snapshot of DP 0x06 and then
+// the voltage/current/power channels can remain frozen.
+#define ZCE_TUYA_DP_MEASURE_ENABLE 106
+#define ZCE_TUYA_MEASURE_ENABLE_PERIOD_S 2
+#define ZCE_TUYA_QUERY_PERIOD_S 5
+
 
 extern char g_wifi_bssid[33];
 extern int  g_secondsElapsed;
@@ -146,6 +147,23 @@ static void buildDeviceId(void) {
 
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
         "ZCE_BIN: device_id=%s topic=%s", g_deviceId, g_topicTelemetry);
+}
+
+// ============================================================
+// Initialisation / maintien de la session TuyaMCU JJMVPD-63LWS
+// ============================================================
+static void zceKickTuyaMCU(bool fullInit) {
+    // Commands are routed through OBK command layer because TuyaMCU APIs are
+    // owned by drv_tuyaMCU.c. This keeps ZCE_BIN independent from TuyaMCU internals.
+    if (fullInit) {
+        CMD_ExecuteCommand("tuyaMcu_sendProductInformation", 0);
+        CMD_ExecuteCommand("tuyaMcu_sendMCUConf", 0);
+        CMD_ExecuteCommand("tuyaMcu_sendQueryState", 0);
+    }
+
+    // Reproduce the original Tuya module behaviour observed on UART:
+    // DP 0x6A = true enables/refreshes metering reports.
+    CMD_ExecuteCommand("tuyaMcu_sendState 106 bool 1", 0);
 }
 
 // ============================================================
@@ -274,39 +292,6 @@ static void publishBinaryFrame(const uint8_t* frame, int len) {
 }
 
 // ============================================================
-// Polling / init TuyaMCU pour JJMVPD-63LWS
-// ============================================================
-static void ZCE_SendTuyaInitCommands(void) {
-    // Réponse WiFi connectée : certains MCU Tuya ne publient pas les mesures
-    // tant qu'ils n'ont pas reçu un statut WiFi valide.
-    CMD_ExecuteCommand("tuyaMcu_defWiFiState 4", COMMAND_FLAG_SOURCE_SCRIPT);
-
-    // DP 106 / 0x6A : activation des mesures sur les variantes JIUJI/Wattel.
-    CMD_ExecuteCommand("tuyaMcu_sendState 106 bool 1", COMMAND_FLAG_SOURCE_SCRIPT);
-
-    // Demande immédiate de tous les DP.
-    CMD_ExecuteCommand("tuyaMcu_sendQueryState", COMMAND_FLAG_SOURCE_SCRIPT);
-}
-
-static void ZCE_PollTuyaMCU(void) {
-    static int seconds_since_query = 0;
-    static int seconds_since_6a = 0;
-
-    seconds_since_query++;
-    seconds_since_6a++;
-
-    if (seconds_since_query >= ZCE_TUYA_QUERY_PERIOD_SECONDS) {
-        seconds_since_query = 0;
-        CMD_ExecuteCommand("tuyaMcu_sendQueryState", COMMAND_FLAG_SOURCE_SCRIPT);
-    }
-
-    if (seconds_since_6a >= ZCE_TUYA_ENABLE_6A_PERIOD_SECONDS) {
-        seconds_since_6a = 0;
-        CMD_ExecuteCommand("tuyaMcu_sendState 106 bool 1", COMMAND_FLAG_SOURCE_SCRIPT);
-    }
-}
-
-// ============================================================
 // Commandes OBK
 // ============================================================
 static commandResult_t ZCE_Cmd_SetUUID(const void* ctx,
@@ -370,8 +355,13 @@ void ZCE_BIN_Init(void) {
     CMD_RegisterCommand("ZCE_SetUUID",  ZCE_Cmd_SetUUID,  NULL);
     CMD_RegisterCommand("ZCE_SetModel", ZCE_Cmd_SetModel, NULL);
     CMD_RegisterCommand("ZCE_GetInfo",  ZCE_Cmd_GetInfo,  NULL);
+    g_zce_seconds = 0;
     g_initialized = true;
-    ZCE_SendTuyaInitCommands();
+
+    // Start the same kind of TuyaMCU session as the original Tuya firmware.
+    // autoexec.bat must start TuyaMCU before ZCE_BIN.
+    zceKickTuyaMCU(true);
+
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
         "ZCE_BIN: init OK device_id=%s", g_deviceId);
 }
@@ -382,8 +372,18 @@ void ZCE_BIN_Init(void) {
 void ZCE_BIN_Every1Second(void) {
     if (!g_initialized) return;
 
-    // Garde les channels OpenBeken à jour même si MQTT n'est pas encore connecté.
-    ZCE_PollTuyaMCU();
+    g_zce_seconds++;
+
+    // Keep MCU metering alive even when MQTT is temporarily disconnected.
+    // This is important: otherwise CHANNEL_Get can keep publishing an old DP 0x06 snapshot.
+    if ((g_zce_seconds % ZCE_TUYA_MEASURE_ENABLE_PERIOD_S) == 0) {
+        CMD_ExecuteCommand("tuyaMcu_sendState 106 bool 1", 0);
+    }
+
+    // Ask for a full DP refresh from time to time.
+    if ((g_zce_seconds % ZCE_TUYA_QUERY_PERIOD_S) == 0) {
+        CMD_ExecuteCommand("tuyaMcu_sendQueryState", 0);
+    }
 
 #if ENABLE_MQTT
     if (!Main_HasMQTTConnected()) return;
