@@ -2,18 +2,23 @@
 // drv_zce_bin.c — Driver ZCE-BIN v1 pour OpenBeken
 // Wattel_EM / T1-U-HL (BK7238)
 //
-// Startup command requis :
+// Startup command recommande :
 // backlog startDriver TuyaMCU; tuyaMcu_defWiFiState 4;
 // linkTuyaMCUOutputToChannel 0x10 bool 1; setChannelType 1 toggle;
-// linkTuyaMCUOutputToChannel 0x06 RAW_TAC2121C_VCP;
 // setChannelType 2 Voltage_div10;
 // setChannelType 3 Power;
 // setChannelType 4 Current_div1000;
+// linkTuyaMCUOutputToChannel 0x06 RAW_TAC2121C_VCP;
 // linkTuyaMCUOutputToChannel 0x0D val 5; setChannelType 5 EnergyTotal_kWh_div100;
 // linkTuyaMCUOutputToChannel 0x68 val 6;
 // linkTuyaMCUOutputToChannel 0x69 val 7;
 // linkTuyaMCUOutputToChannel 0x0B bool 8;
 // startDriver ZCE_BIN
+//
+// Le driver ZCE_BIN envoie automatiquement au demarrage :
+//   tuyaMcu_defWiFiState 4
+//   tuyaMcu_sendState 106 bool 1   (DP 0x6A = enable mesures)
+//   tuyaMcu_sendQueryState
 //
 // Mapping channels :
 //   CH 1 → relay_state  (DP 0x10 bool)
@@ -71,6 +76,8 @@ static char g_topicTelemetry[96]        = {0};
 static char g_uuid[40]                  = {0};
 static char g_model[16]                 = {0};
 static bool g_initialized               = false;
+static bool g_tuyaInitSequenceDone      = false;
+static int  g_tuyaInitSequenceRetries   = 0;
 
 extern char g_wifi_bssid[33];
 extern int  g_secondsElapsed;
@@ -240,6 +247,31 @@ static int buildBinaryFrame(uint8_t* frame) {
 }
 
 // ============================================================
+// Initialisation specifique Wattel_EM / T1-U-HL
+// Reproduit la sequence qui existait dans l'ancien firmware CBU :
+// - annoncer au MCU que le WiFi est online
+// - activer les mesures avec DP 0x6A = 1
+// - demander un etat complet
+// ============================================================
+static void runTuyaStartupSequence(void) {
+    if (g_tuyaInitSequenceDone) return;
+    if (g_tuyaInitSequenceRetries >= 3) {
+        g_tuyaInitSequenceDone = true;
+        return;
+    }
+
+    CMD_ExecuteCommand("tuyaMcu_defWiFiState 4", 0);
+    CMD_ExecuteCommand("tuyaMcu_sendState 106 bool 1", 0);
+    CMD_ExecuteCommand("tuyaMcu_sendQueryState", 0);
+
+    g_tuyaInitSequenceRetries++;
+
+    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
+        "ZCE_BIN: init TuyaMCU Wattel_EM/T1-U-HL envoyee, retry=%d",
+        g_tuyaInitSequenceRetries);
+}
+
+// ============================================================
 // Publication MQTT binaire
 // ============================================================
 static void publishBinaryFrame(const uint8_t* frame, int len) {
@@ -323,6 +355,8 @@ static commandResult_t ZCE_Cmd_GetInfo(const void* ctx,
 void ZCE_BIN_Init(void) {
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_BIN: init");
     buildDeviceId();
+    g_tuyaInitSequenceDone = false;
+    g_tuyaInitSequenceRetries = 0;
     CMD_RegisterCommand("ZCE_SetUUID",  ZCE_Cmd_SetUUID,  NULL);
     CMD_RegisterCommand("ZCE_SetModel", ZCE_Cmd_SetModel, NULL);
     CMD_RegisterCommand("ZCE_GetInfo",  ZCE_Cmd_GetInfo,  NULL);
@@ -335,8 +369,11 @@ void ZCE_BIN_Init(void) {
 // ZCE_BIN_Every1Second
 // ============================================================
 void ZCE_BIN_Every1Second(void) {
-#if ENABLE_MQTT
     if (!g_initialized) return;
+
+    runTuyaStartupSequence();
+
+#if ENABLE_MQTT
     if (!Main_HasMQTTConnected()) return;
 
     uint8_t frame[ZCE_FRAME_SIZE];
@@ -356,6 +393,8 @@ void ZCE_BIN_RunQuickTick(void) {
 // ============================================================
 void ZCE_BIN_Stop(void) {
     g_initialized = false;
+    g_tuyaInitSequenceDone = false;
+    g_tuyaInitSequenceRetries = 0;
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_BIN: stopped");
 }
 
