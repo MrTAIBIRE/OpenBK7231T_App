@@ -1826,13 +1826,33 @@ void TuyaMCU_ParseStateMessage(const byte* data, int len) {
 							CHANNEL_Set(mapping->channel + 2, iP, 0);
 						}
 					}
-					else if (sectorLen == 8 || sectorLen == 10) {
+					else if (sectorLen == 8) {
 						int iV, iC, iP;
-						// voltage
+						// Wattel_EM / T1-U-HL, DP 0x06 raw 8 bytes:
+						// [0..1] voltage V*10, [2..4] current A*1000, [5..7] power W
+						iV = (data[ofs + 4] << 8) | data[ofs + 5];
+						iC = (data[ofs + 6] << 16) | (data[ofs + 7] << 8) | data[ofs + 8];
+						iP = (data[ofs + 9] << 16) | (data[ofs + 10] << 8) | data[ofs + 11];
+						// calibration
+						CALIB_IF_NONZERO(iV, mapping->delta);
+						CALIB_IF_NONZERO(iC, mapping->delta2);
+						CALIB_IF_NONZERO(iP, mapping->delta3);
+						if (mapping->channel < 0) {
+							CHANNEL_SetFirstChannelByType(ChType_Voltage_div10, iV);
+							CHANNEL_SetFirstChannelByType(ChType_Current_div1000, iC);
+							CHANNEL_SetFirstChannelByType(ChType_Power, iP);
+						}
+						else {
+							CHANNEL_Set(mapping->channel, iV, 0);
+							CHANNEL_Set(mapping->channel + 1, iC, 0);
+							CHANNEL_Set(mapping->channel + 2, iP, 0);
+						}
+					}
+					else if (sectorLen == 10) {
+						int iV, iC, iP;
+						// Keep the original OpenBeken TAC2121C 10-byte decoder.
 						iV = data[ofs + 0 + 4] << 8 | data[ofs + 1 + 4];
-						// current
 						iC = data[ofs + 3 + 4] << 8 | data[ofs + 4 + 4];
-						// power
 						iP = data[ofs + 6 + 4] << 8 | data[ofs + 7 + 4];
 						// calibration
 						CALIB_IF_NONZERO(iV, mapping->delta);
@@ -1845,8 +1865,8 @@ void TuyaMCU_ParseStateMessage(const byte* data, int len) {
 						}
 						else {
 							CHANNEL_Set(mapping->channel, iV, 0);
-							CHANNEL_Set(mapping->channel+1, iC, 0);
-							CHANNEL_Set(mapping->channel+2, iP, 0);
+							CHANNEL_Set(mapping->channel + 1, iC, 0);
+							CHANNEL_Set(mapping->channel + 2, iP, 0);
 						}
 					}
 					else {
