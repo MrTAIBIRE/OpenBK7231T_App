@@ -1283,6 +1283,31 @@ void isidle() {
 
 bool g_unsafeInitDone = false;
 
+static void ZCE_EM_RunHardcodedStartup(void) {
+	// Product firmware startup: no autoexec.bat, no Startup Command List.
+	// Keep a single deterministic configuration path for ZCE EM.
+	addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_EM: applying hardcoded TuyaMCU/ZCE startup");
+	CMD_ExecuteCommand("startDriver TuyaMCU", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("tuyaMcu_defWiFiState 4", COMMAND_FLAG_SOURCE_SCRIPT);
+
+	CMD_ExecuteCommand("linkTuyaMCUOutputToChannel 0x10 bool 1", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("setChannelType 1 toggle", COMMAND_FLAG_SOURCE_SCRIPT);
+
+	CMD_ExecuteCommand("setChannelType 2 Voltage_div10", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("setChannelType 3 Power", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("setChannelType 4 Current_div1000", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("linkTuyaMCUOutputToChannel 0x06 RAW_TAC2121C_VCP", COMMAND_FLAG_SOURCE_SCRIPT);
+
+	CMD_ExecuteCommand("linkTuyaMCUOutputToChannel 0x0D val 5", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("setChannelType 5 EnergyTotal_kWh_div100", COMMAND_FLAG_SOURCE_SCRIPT);
+
+	CMD_ExecuteCommand("linkTuyaMCUOutputToChannel 0x68 val 6", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("linkTuyaMCUOutputToChannel 0x69 val 7", COMMAND_FLAG_SOURCE_SCRIPT);
+	CMD_ExecuteCommand("linkTuyaMCUOutputToChannel 0x0B bool 8", COMMAND_FLAG_SOURCE_SCRIPT);
+
+	CMD_ExecuteCommand("startDriver ZCE_BIN", COMMAND_FLAG_SOURCE_SCRIPT);
+}
+
 void Main_Init_AfterDelay_Unsafe(bool bStartAutoRunScripts) {
 
 	// initialise MQTT - just sets up variables.
@@ -1294,33 +1319,9 @@ void Main_Init_AfterDelay_Unsafe(bool bStartAutoRunScripts) {
 	CMD_Init_Delayed();
 
 	if (bStartAutoRunScripts) {
-		if (PIN_FindPinIndexForRole(IOR_IRRecv, -1) != -1 || PIN_FindPinIndexForRole(IOR_IRSend, -1) != -1
-			|| PIN_FindPinIndexForRole(IOR_IRRecv_nPup, -1) != -1) {
-			// start IR driver 5 seconds after boot.  It may affect wifi connect?
-			// yet we also want it to start if no wifi for IR control...
-#ifndef OBK_DISABLE_ALL_DRIVERS
-#if ENABLE_DRIVER_IR || ENABLE_DRIVER_IRREMOTEESP
-			DRV_StartDriver("IR");
-			//ScheduleDriverStart("IR",5);
-#elif ENABLE_DRIVER_TINYIR_NEC
-			if(PIN_FindPinIndexForRole(IOR_IRSend, -1) == -1) 
-				DRV_StartDriver("TinyIR_NEC");
-#endif
-#endif
-		}
-
-		// NOTE: this will try to read autoexec.bat,
-		// so ALL commands expected in autoexec.bat should have been registered by now...
-#if ENABLE_OBK_SCRIPTING
-		SVM_RunStartupCommandAsScript();
-#else
-		CMD_ExecuteCommand(CFG_GetShortStartupCommand(), COMMAND_FLAG_SOURCE_SCRIPT);
-#endif
-		CMD_ExecuteCommand("startScript autoexec.bat", COMMAND_FLAG_SOURCE_SCRIPT);
-#if ENABLE_OBK_BERRY
-		CMD_ExecuteCommand("berry import autoexec", COMMAND_FLAG_SOURCE_SCRIPT);
-#endif
+		ZCE_EM_RunHardcodedStartup();
 	}
+
 }
 void Main_Init_BeforeDelay_Unsafe(bool bAutoRunScripts) {
 	g_unsafeInitDone = true;

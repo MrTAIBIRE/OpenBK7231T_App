@@ -430,7 +430,9 @@ static void zce_apply_relay_command(int value) {
 static void zce_send_hello(void *ctx) {
     char msg[128];
     snprintf(msg, sizeof(msg), "{\"type\":\"hello\",\"device_id\":\"%s\"}", ZCE_BIN_GetDeviceId());
-    zce_ws_send_frame(ctx, 0x1, msg, -1);
+    if (zce_ws_send_frame(ctx, 0x1, msg, -1) == 0) {
+        addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_WS: hello sent device_id=%s", ZCE_BIN_GetDeviceId());
+    }
 }
 
 static void zce_send_relay_ack(void *ctx, int value) {
@@ -513,6 +515,7 @@ static void zce_ws_thread_main(beken_thread_arg_t arg) {
 
 void ZCE_WS_CMD_Init(void) {
     if (s_ws_thread != NULL) return;
+    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_WS: init command client");
     s_ws_stop = false;
     s_ws_connected = false;
 

@@ -836,6 +836,18 @@ void CFG_SetDisableWebServer(byte value) {
 }
 #endif
 
+
+static void CFG_EnsureZCEDeviceIdentity(void) {
+	// Keep legacy shortDeviceName untouched if it already exists in flash,
+	// but ensure the MQTT client id uses the full ZCE device id.
+	// This prevents topics such as zce/obkXXXX/availability while telemetry
+	// is published as zce/ZCE-EM-obkXXXX/telemetry.
+	if (strncmp(g_cfg.mqtt_clientId, "ZCE-EM-", 7) != 0) {
+		snprintf(g_cfg.mqtt_clientId, sizeof(g_cfg.mqtt_clientId), "ZCE-EM-%s", g_cfg.shortDeviceName);
+		g_cfg_pendingChanges++;
+	}
+}
+
 void CFG_InitAndLoad() {
 	byte chkSum;
 
@@ -856,6 +868,8 @@ void CFG_InitAndLoad() {
 #endif
 		addLogAdv(LOG_WARN, LOG_FEATURE_CFG, "CFG_InitAndLoad: Correct config has been loaded with %i changes count.",g_cfg.changeCounter);
 	}
+
+	CFG_EnsureZCEDeviceIdentity();
 
 	// copy shortDeviceName to MQTT Client ID, set version=3
 	if (g_cfg.version<3) {

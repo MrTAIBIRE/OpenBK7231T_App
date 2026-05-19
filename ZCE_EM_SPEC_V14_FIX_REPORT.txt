@@ -1,0 +1,76 @@
+ZCE EM spec v1.4 compliance fixes
+=================================
+
+Purpose
+-------
+Fix the two issues reported by backend tests:
+
+1) availability was published with the short MQTT client id
+   zce/obkXXXX/availability
+   while telemetry/status used the full ZCE id
+   zce/ZCE-EM-obkXXXX/telemetry.
+
+2) the backend did not receive any /ws/device connection from the real device.
+
+Modified files
+--------------
+- src/mqtt/new_mqtt.c
+- src/new_cfg.c
+- src/user_main.c
+- src/driver/drv_zce_ws_cmd.c
+- Makefile
+- components.mk
+
+Details
+-------
+1. Unified device_id for MQTT topics
+   src/mqtt/new_mqtt.c now uses ZCE_BIN_GetDeviceId() for:
+   - MQTT client_id
+   - LWT topic: zce/<device_id>/availability
+   - online publish topic: zce/<device_id>/availability
+
+   This makes availability/status/telemetry use the same full device id:
+   zce/ZCE-EM-xxxx/availability
+   zce/ZCE-EM-xxxx/status
+   zce/ZCE-EM-xxxx/telemetry
+
+2. Legacy config migration
+   src/new_cfg.c now ensures g_cfg.mqtt_clientId is migrated to ZCE-EM-<shortDeviceName>
+   when an old flash config still contains obkXXXX or another non-ZCE id.
+
+3. Hardcoded product startup
+   src/user_main.c now runs the ZCE EM TuyaMCU/ZCE startup directly in firmware:
+   - startDriver TuyaMCU
+   - tuyaMcu_defWiFiState 4
+   - DP/channel mapping for JJMVPD-63LWS DP 0x06, 0x0D, 0x68, 0x69, 0x0B
+   - startDriver ZCE_BIN
+
+   It no longer depends on Startup Command List or autoexec.bat.
+
+4. WebSocket command client is actually enabled for WSS
+   The backend command endpoint is WSS, so the BK7238 build must compile TLS support.
+   Makefile now passes CFG_USE_MQTT_TLS=1 for OpenBK7238.
+   components.mk now allows TLS build components for bk7238 as well as bk7231n.
+
+5. Better runtime logs
+   src/driver/drv_zce_ws_cmd.c now logs init and hello send events:
+   - ZCE_WS: init command client
+   - ZCE_WS: connecting wss://...
+   - ZCE_WS: connected
+   - ZCE_WS: hello sent device_id=ZCE-EM-...
+
+Expected backend-visible behavior
+---------------------------------
+- MQTT availability topic: zce/ZCE-EM-xxxx/availability
+- MQTT status topic:       zce/ZCE-EM-xxxx/status
+- MQTT telemetry topic:    zce/ZCE-EM-xxxx/telemetry
+- Device opens WSS client connection to:
+  wss://mqtt-service-staging-894834276803.europe-west1.run.app/ws/device
+- Device sends:
+  {"type":"hello","device_id":"ZCE-EM-xxxx"}
+
+Notes
+-----
+The relay command path remains single-source:
+/ws/device command -> setChannel 1 -> existing TuyaMCU channel mapping.
+No duplicate relay command path via MQTT was added.

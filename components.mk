@@ -10,7 +10,7 @@ SRC_C += $(BERRY_SRC_C)
 CPPDEFINES += -DOBK_VARIANT=$(OBK_VARIANT)
 CPPDEFINES += -D__FILE__=\"\" -Wno-builtin-macro-redefined
 
-ifeq ($(TARGET_PLATFORM),bk7231n)
+ifneq (,$(filter $(TARGET_PLATFORM),bk7231n bk7238))
 
 CFG_USE_MQTT_TLS ?= 0
 

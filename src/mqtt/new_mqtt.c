@@ -15,6 +15,7 @@
 //#include "../driver/drv_ntp.h"
 #include "../driver/drv_deviceclock.h"
 #include "../driver/drv_tuyaMCU.h"
+#include "../driver/drv_zce_bin.h"
 #include "../hal/hal_ota.h"
 #include <math.h>
 #ifndef WINDOWS
@@ -1171,7 +1172,7 @@ static void mqtt_connection_cb(mqtt_client_t* client, void* arg, mqtt_connection
 			}
 		}
 
-		clientId = CFG_GetMQTTClientId();
+		clientId = ZCE_BIN_GetDeviceId();
 
 		snprintf(tmp, sizeof(tmp), "zce/%s/availability", clientId);
 		//LOCK_TCPIP_CORE();
@@ -1235,7 +1236,7 @@ static int MQTT_do_connect(mqtt_client_t* client)
 	mqtt_host = ZCE_MQTT_WS_HOST;
 	mqtt_userName = "";
 	mqtt_pass = "";
-	mqtt_clientID = CFG_GetMQTTClientId();
+	mqtt_clientID = ZCE_BIN_GetDeviceId();
 	mqtt_port = ZCE_MQTT_WS_PORT;
 #if MQTT_USE_TLS
 	mqtt_use_tls = CFG_GetMQTTUseTls();
