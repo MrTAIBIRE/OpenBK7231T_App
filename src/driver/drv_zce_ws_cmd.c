@@ -36,7 +36,11 @@
 
 
 #ifndef MQTT_USE_TLS
+#ifdef CFG_USE_MQTT_TLS
+#define MQTT_USE_TLS CFG_USE_MQTT_TLS
+#else
 #define MQTT_USE_TLS 0
+#endif
 #endif
 
 #if !MQTT_USE_TLS

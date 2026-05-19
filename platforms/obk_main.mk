@@ -7,6 +7,14 @@ OBK_CFLAGS += -DUSER_SW_VER='"${USER_SW_VER}"'
 else 
 ifdef APP_VERSION
 OBK_CFLAGS += -DUSER_SW_VER='"${APP_VERSION}"'
+
+# ZCE EM command WebSocket uses wss://.../ws/device, so TLS support must be
+# visible to the application C compiler. Passing CFG_USE_MQTT_TLS=1 only to
+# build.sh is not enough; drv_zce_ws_cmd.c checks MQTT_USE_TLS at compile time.
+OBK_CFLAGS += -DMQTT_USE_TLS=1
+OBK_CFLAGS += -DLWIP_ALTCP=1 -DLWIP_ALTCP_TLS=1 -DLWIP_ALTCP_TLS_MBEDTLS=1
+OBK_CFLAGS += -DMEMP_NUM_ALTCP_PCB=4
+OBK_CFLAGS += -DMBEDTLS_CONFIG_FILE='"user_mbedtls_config.h"'
 endif
 endif
 

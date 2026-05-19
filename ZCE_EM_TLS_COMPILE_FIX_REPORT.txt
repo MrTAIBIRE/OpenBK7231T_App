@@ -1,0 +1,12 @@
+ZCE EM TLS compile fix
+
+Problem:
+GitHub Actions passed CFG_USE_MQTT_TLS=1 to build.sh, but drv_zce_ws_cmd.c checks MQTT_USE_TLS at C compile time.
+The application compiler did not receive -DMQTT_USE_TLS=1, so the intentional #error fired.
+
+Fix:
+- platforms/obk_main.mk now adds -DMQTT_USE_TLS=1 and the related TLS defines to OBK_CFLAGS.
+- drv_zce_ws_cmd.c now also maps CFG_USE_MQTT_TLS to MQTT_USE_TLS as a defensive fallback.
+
+Why this is not a backend issue:
+This was a build macro propagation issue. The firmware could not compile the WSS command client.
