@@ -1,0 +1,41 @@
+ZCE EM v1.4 WebSocket command exact fix
+
+Root cause found in the current project:
+1) The actual WSS client code in src/driver/drv_zce_ws_cmd.c was compiled only under MQTT_USE_TLS.
+   In this project, components.mk defined MQTT_USE_TLS only when TARGET_PLATFORM matched bk7238.
+   In the BK SDK build this condition can be false/not propagated, so the firmware can compile a
+   dummy command client that never opens the TLS/WSS connection. This matches the backend symptom:
+   no /ws/device incoming connection and no hello frame.
+
+2) The WebSocket handshake used:
+     Sec-WebSocket-Key: WkNFX0VNX0NNRA==
+   This is not a valid RFC6455 key because it does not decode to 16 bytes. Some WebSocket servers
+   reject the request before the application logs a [WS-DEV] connection. It is now replaced by a
+   valid 16-byte base64 key:
+     Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
+
+Fixes applied:
+- components.mk:
+  * TLS support is now enabled for ZCE EM when CFG_USE_MQTT_TLS=1 without depending on TARGET_PLATFORM.
+  * Default CFG_USE_MQTT_TLS is set to 1 for this product branch.
+- Makefile:
+  * prebuild_OpenBK7238 downloads/prepares mbedTLS before compiling.
+  * MQTT WebSocket patch is still copied into the BK SDK before build.
+  * OpenBK7238 build still passes CFG_USE_MQTT_TLS=1.
+- src/driver/drv_zce_ws_cmd.c:
+  * The file now fails compilation if MQTT_USE_TLS is not active, instead of silently building a non-functional WSS client.
+  * WebSocket key fixed to a valid RFC6455 key.
+  * Added logs for DNS/TCP/TLS/WS handshake.
+
+Validation after flashing:
+Expected serial logs:
+  ZCE_WS: init command client
+  ZCE_WS: connecting wss://mqtt-service-staging-894834276803.europe-west1.run.app/ws/device
+  ZCE_WS: TCP connected host=mqtt-service-staging-894834276803.europe-west1.run.app port=443
+  ZCE_WS: TLS connected
+  ZCE_WS: WS handshake OK
+  ZCE_WS: hello sent device_id=ZCE-EM-obk8C428848
+
+Expected backend:
+  GET /api/v1/devices/connected contains ZCE-EM-obk8C428848
+  POST /api/v1/devices/ZCE-EM-obk8C428848/relay returns HTTP 200 delivered=true

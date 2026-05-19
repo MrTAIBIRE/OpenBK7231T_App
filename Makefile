@@ -305,6 +305,8 @@ prebuild_OpenRTL8720D: berry
 
 prebuild_OpenBK7238: berry
 	git submodule update --init --recursive --depth=1 sdk/beken_freertos_sdk
+	mkdir -p output
+	if [ ! -d "$(MBEDTLS)" ]; then wget -q "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v2.28.5.tar.gz"; tar -xf v2.28.5.tar.gz -C output; rm -f v2.28.5.tar.gz; if [ -f $(MBEDTLS)/library/base64.c ]; then mv $(MBEDTLS)/library/base64.c $(MBEDTLS)/library/base64_mbedtls.c; fi; fi
 	if [ -f libraries/mqtt_patched.c ] && [ -f sdk/beken_freertos_sdk/beken378/func/lwip_intf/lwip-2.1.3/src/apps/mqtt/mqtt.c ]; then cp -f libraries/mqtt_patched.c sdk/beken_freertos_sdk/beken378/func/lwip_intf/lwip-2.1.3/src/apps/mqtt/mqtt.c; fi
 	if [ ! -e sdk/beken_freertos_sdk/toolchain/arm-none-eabi ]; then cd sdk/beken_freertos_sdk/toolchain && XZ_OPT="-T0" tar -xf *.tar.xz; fi
 	@if [ -e platforms/BK723x/pre_build_7238.sh ]; then \

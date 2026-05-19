@@ -10,9 +10,12 @@ SRC_C += $(BERRY_SRC_C)
 CPPDEFINES += -DOBK_VARIANT=$(OBK_VARIANT)
 CPPDEFINES += -D__FILE__=\"\" -Wno-builtin-macro-redefined
 
-ifneq (,$(filter $(TARGET_PLATFORM),bk7231n bk7238))
-
-CFG_USE_MQTT_TLS ?= 0
+# ZCE EM requires WSS for backend relay commands.
+# Do not depend on TARGET_PLATFORM here: in the BK SDK build this variable
+# is not always propagated as "bk7238", which previously compiled
+# drv_zce_ws_cmd.c without MQTT_USE_TLS and made the device never connect
+# to /ws/device.
+CFG_USE_MQTT_TLS ?= 1
 
 ifeq ($(CFG_USE_MQTT_TLS),1)
 
@@ -78,7 +81,6 @@ SRC_C += ${MBEDTLS_DIR}/library/camellia.c
 SRC_C += ${MBEDTLS_DIR}/library/ssl_cli.c
 
 endif   #ifeq ($(CFG_USE_MQTT_TLS),1)
-endif   #ifeq ($(TARGET_PLATFORM),bk7231n)
 
 SRC_C += $(OBK_DIR)/libraries/easyflash/ports/ef_port.c
 SRC_C += $(OBK_DIR)/libraries/easyflash/src/easyflash.c
