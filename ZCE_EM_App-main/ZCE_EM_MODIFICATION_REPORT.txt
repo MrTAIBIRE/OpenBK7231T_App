@@ -1,0 +1,43 @@
+ZCE EM adaptation report
+
+Implemented from Texte collé.txt:
+- HTTP surface reduced to: /, /index, /cfg, /cfg_wifi, /cfg_wifi_set, /ota, /ota_exec.
+- /api/ota remains available because the OTA upload form needs it.
+- /app, generic /api GET/POST, /cmd_tool, /cfg_mqtt, /cfg_pins, /cfg_startup, /startup_command, /cfg_ip, /cfg_mac, /ha_cfg and other advanced base routes are no longer reachable through the HTTP router.
+- Product page now displays ZCE EM, not the original base-firmware branding.
+- Default device names are generated as ZCE_EM_xxxxxxxx / ZCEEMxxxxxxxx.
+- HTTP Basic Auth realm changed to ZCE EM HTTP Server.
+- External links, forum/docs/support/footer links and WebApp links were removed from the visible HTTP interface.
+- Wi-Fi page was simplified to SSID/password + Wi-Fi scan link.
+- OTA page was kept and reworded for ZCE EM.
+- Project top folder was renamed to ZCE_EM_App-main.
+
+Files modified:
+- src/httpserver/new_http.c
+- src/httpserver/http_fns.c
+- src/httpserver/rest_interface.c
+- src/httpserver/http_basic_auth.c
+- src/httpserver/json_interface.c
+- src/httpserver/hass.c
+- src/new_cfg.c
+- src/new_common.h
+- src/mqtt/new_mqtt.c
+- multiple text/comment-only source references under src/ and include/ were rebranded from the base name to ZCE EM.
+
+Files/folders removed as non-product artifacts:
+- .github/
+- .vscode/
+- Release/
+- Release Win32/
+- Release Win322/
+- Windows Visual Studio project files and run_*.bat files
+- BUILDING.md, README.md, FLASHING.md
+
+Verification performed:
+- Search for the previous public project names in the modified tree returns 0 results.
+- HTTP route table now exposes only the minimal product pages plus OTA.
+
+Important attention points:
+- Low-level identifiers such as OBK_* macros, PLATFORM_BEKEN, BK7231, BK_ and SDK paths still exist in the source tree. They are hardware/build identifiers required by the target platform and were not globally renamed because doing so would likely break compilation.
+- Non-Wi-Fi driver source files are still present unless they were purely documentation/build artifacts. They are not exposed in the HTTP interface. A deeper physical driver removal should be done only with the exact build target/toolchain available and continuous compile checks.
+- I could not run a full firmware build in this environment because the target cross-toolchain/SDK build environment is not available here.
