@@ -10,18 +10,14 @@ SRC_C += $(BERRY_SRC_C)
 CPPDEFINES += -DOBK_VARIANT=$(OBK_VARIANT)
 CPPDEFINES += -D__FILE__=\"\" -Wno-builtin-macro-redefined
 
-# ZCE EM requires WSS for backend relay commands.
-# Do not depend on TARGET_PLATFORM here: in the BK SDK build this variable
-# is not always propagated as "bk7238", which previously compiled
-# drv_zce_ws_cmd.c without MQTT_USE_TLS and made the device never connect
-# to /ws/device.
-CFG_USE_MQTT_TLS ?= 1
+CFG_USE_MQTT_TLS ?= 0
 
 ifeq ($(CFG_USE_MQTT_TLS),1)
 
 MBEDTLS_DIR = $(TOP_DIR)/apps/$(APP_BIN_NAME)/output/mbedtls-2.28.5
 INCLUDES := -I$(MBEDTLS_DIR)/include -I$(TOP_DIR)/apps/$(APP_BIN_NAME)/src $(INCLUDES)
 MQTT_TLS_DEFS += -DMQTT_USE_TLS=1
+MQTT_TLS_DEFS += -DCFG_USE_MQTT_TLS=1
 MQTT_TLS_DEFS += -DLWIP_ALTCP=1
 MQTT_TLS_DEFS += -DLWIP_ALTCP_TLS=1
 MQTT_TLS_DEFS += -DLWIP_ALTCP_TLS_MBEDTLS=1

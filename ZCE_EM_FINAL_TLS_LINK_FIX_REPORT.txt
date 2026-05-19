@@ -1,0 +1,11 @@
+ZCE EM final TLS/WSS build fix
+
+Reason for failure:
+- CFG_USE_MQTT_TLS=1 was passed by Makefile, but components.mk only enabled TLS when TARGET_PLATFORM matched bk7231n/bk7238. In this SDK build context TARGET_PLATFORM is not reliably set, so MQTT_USE_TLS and mbedTLS sources were not added to the app build.
+- drv_zce_ws_cmd.c was still using MQTT_USE_TLS directly for the command WebSocket path.
+
+Fix:
+- components.mk now enables TLS whenever CFG_USE_MQTT_TLS=1, independent of TARGET_PLATFORM.
+- components.mk adds -DMQTT_USE_TLS=1 and -DCFG_USE_MQTT_TLS=1 plus mbedTLS source files.
+- drv_zce_ws_cmd.c uses its own ZCE_WS_CMD_USE_TLS=1 for the command WebSocket and keeps the valid WebSocket key.
+- Makefile prepares mbedTLS before BK7238 build and passes CFG_USE_MQTT_TLS=1.

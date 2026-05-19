@@ -34,10 +34,9 @@
 #include "lwip/netdb.h"
 #endif
 
-// ZCE command WebSocket is always WSS in protocol v1.4.
-// Do not depend on MQTT_USE_TLS here: that macro belongs to the MQTT client
-// and is not reliably propagated to every driver source in this build system.
+#ifndef ZCE_WS_CMD_USE_TLS
 #define ZCE_WS_CMD_USE_TLS 1
+#endif
 
 #if ZCE_WS_CMD_USE_TLS
 #include "mbedtls/ssl.h"
@@ -508,7 +507,7 @@ static void zce_ws_thread_main(beken_thread_arg_t arg) {
         s_ws_connected = false;
         zce_tls_free(&tls);
 #else
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: TLS disabled, WSS command channel unavailable");
+        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: MQTT_USE_TLS disabled, WSS command channel unavailable");
 #endif
 
         if (!s_ws_stop) rtos_delay_milliseconds(ZCE_WS_RECONNECT_DELAY_MS);
