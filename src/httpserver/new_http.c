@@ -331,7 +331,7 @@ void http_html_start(http_request_t *request, const char *pagename)
 {
 	poststr(request, htmlDoctype);
 	poststr(request, "<head><title>");
-	poststr(request, CFG_GetDeviceName());
+	poststr(request, "ZCE EM");
 	if (pagename)
 	{
 		hprintf255(request, " - %s", pagename);
@@ -342,7 +342,7 @@ void http_html_start(http_request_t *request, const char *pagename)
 	poststr(request, htmlHeadStyle);
 	poststr(request, "</head>");
 	poststr(request, htmlBodyStart);
-	poststr(request, CFG_GetDeviceName());
+	poststr(request, "ZCE EM");
 	poststr(request, htmlBodyStart2);
 }
 

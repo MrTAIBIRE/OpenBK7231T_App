@@ -150,6 +150,17 @@ static void buildDeviceId(void) {
 }
 
 // ============================================================
+// Public getter used by the ZCE EM HTTP page.
+// It returns the same device_id used by ZCE telemetry topics.
+// ============================================================
+const char *ZCE_BIN_GetDeviceId(void) {
+    if (g_deviceId[0] == '\0') {
+        buildDeviceId();
+    }
+    return g_deviceId;
+}
+
+// ============================================================
 // Initialisation / maintien de la session TuyaMCU JJMVPD-63LWS
 // ============================================================
 static void zceKickTuyaMCU(bool fullInit) {
