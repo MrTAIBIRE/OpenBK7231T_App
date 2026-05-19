@@ -2261,9 +2261,6 @@ int MQTT_RunEverySecondUpdate()
 				{
 					LOCK_TCPIP_CORE();
 					mqtt_disconnect(mqtt_client);
-#if defined(MQTT_CLIENT_CLEANUP)
-					mqtt_client_cleanup(mqtt_client);
-#endif
 					UNLOCK_TCPIP_CORE();
 				}
 				if (MQTT_do_connect(mqtt_client) == ERR_RTE) {

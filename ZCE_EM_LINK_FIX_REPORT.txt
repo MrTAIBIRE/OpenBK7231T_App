@@ -1,0 +1,25 @@
+ZCE EM link fix
+================
+
+Problem seen in GitHub Actions:
+- undefined reference to mqtt_set_websocket_config
+- undefined reference to ZCE_WS_CMD_Init
+- undefined reference to ZCE_WS_CMD_Stop
+
+Root cause:
+1) src/driver/drv_zce_ws_cmd.c existed in the project but was not included in the BK7238 build source list.
+2) libraries/mqtt_patched.c contained mqtt_set_websocket_config(), but the BK7238 SDK was still compiling its own lwIP mqtt.c instead of the patched one.
+
+Fix applied:
+1) platforms/obk_main.mk
+   Added drv_zce_ws_cmd.c to OBKM_SRC immediately after drv_zce_bin.c.
+
+2) Makefile
+   In prebuild_OpenBK7238, after initializing sdk/beken_freertos_sdk, copy libraries/mqtt_patched.c over the SDK lwIP MQTT client source:
+   sdk/beken_freertos_sdk/beken378/func/lwip_intf/lwip-2.1.3/src/apps/mqtt/mqtt.c
+
+Why this is coherent:
+- drv_zce_bin.c starts/stops one WebSocket command client.
+- drv_zce_ws_cmd.c is now compiled and linked once.
+- MQTT over WebSocket is still implemented in the single patched MQTT client, not as a second MQTT stack.
+- No duplicate command path was added.
