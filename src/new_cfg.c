@@ -1,4 +1,3 @@
-
 #include "new_common.h"
 #include "logging/logging.h"
 #include "httpserver/new_http.h"
@@ -308,7 +307,7 @@ const char *CFG_GetShortDeviceName(){
 	return g_cfg.shortDeviceName;
 }
 // called from SDK 
-const char *CFG_GetZCE EMHostName() {
+const char *CFG_GetOpenBekenHostName() {
 	if (CFG_HasFlag(OBK_FLAG_USE_SHORT_DEVICE_NAME_AS_HOSTNAME)) {
 		return CFG_GetShortDeviceName();
 	}
