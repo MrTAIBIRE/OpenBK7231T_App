@@ -34,20 +34,12 @@
 #include "lwip/netdb.h"
 #endif
 
+// ZCE command WebSocket is always WSS in protocol v1.4.
+// Do not depend on MQTT_USE_TLS here: that macro belongs to the MQTT client
+// and is not reliably propagated to every driver source in this build system.
+#define ZCE_WS_CMD_USE_TLS 1
 
-#ifndef MQTT_USE_TLS
-#ifdef CFG_USE_MQTT_TLS
-#define MQTT_USE_TLS CFG_USE_MQTT_TLS
-#else
-#define MQTT_USE_TLS 0
-#endif
-#endif
-
-#if !MQTT_USE_TLS
-#error "ZCE EM command WebSocket requires MQTT_USE_TLS=1. The device cannot connect to wss://.../ws/device without TLS."
-#endif
-
-#if MQTT_USE_TLS
+#if ZCE_WS_CMD_USE_TLS
 #include "mbedtls/ssl.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
@@ -101,7 +93,6 @@ static int zce_tcp_connect(const char *host, int port) {
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
         if (connect(fd, cur->ai_addr, cur->ai_addrlen) == 0) {
-            addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_WS: TCP connected host=%s port=%d", host, port);
             break;
         }
 
@@ -110,13 +101,10 @@ static int zce_tcp_connect(const char *host, int port) {
     }
 
     if (addrInfoList) freeaddrinfo(addrInfoList);
-    if (fd < 0) {
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: TCP connect failed host=%s port=%d", host, port);
-    }
     return fd;
 }
 
-#if MQTT_USE_TLS
+#if ZCE_WS_CMD_USE_TLS
 // ------------------------------------------------------------
 // Minimal mbedTLS wrapper around an lwIP socket.
 // Certificate verification is optional because the existing firmware does not
@@ -181,28 +169,19 @@ static int zce_tls_connect(zce_tls_t *t, const char *host, int port) {
 
     ret = mbedtls_ctr_drbg_seed(&t->ctr_drbg, mbedtls_entropy_func, &t->entropy,
                                 (const unsigned char *)pers, strlen(pers));
-    if (ret != 0) {
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: ctr_drbg_seed failed ret=%d", ret);
-        return ret;
-    }
+    if (ret != 0) return ret;
 
     ret = mbedtls_ssl_config_defaults(&t->conf,
                                       MBEDTLS_SSL_IS_CLIENT,
                                       MBEDTLS_SSL_TRANSPORT_STREAM,
                                       MBEDTLS_SSL_PRESET_DEFAULT);
-    if (ret != 0) {
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: ssl_config_defaults failed ret=%d", ret);
-        return ret;
-    }
+    if (ret != 0) return ret;
 
     mbedtls_ssl_conf_authmode(&t->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
     mbedtls_ssl_conf_rng(&t->conf, mbedtls_ctr_drbg_random, &t->ctr_drbg);
 
     ret = mbedtls_ssl_setup(&t->ssl, &t->conf);
-    if (ret != 0) {
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: ssl_setup failed ret=%d", ret);
-        return ret;
-    }
+    if (ret != 0) return ret;
 
     mbedtls_ssl_set_hostname(&t->ssl, host);
     mbedtls_ssl_set_bio(&t->ssl, &t->fd, zce_tls_send_cb, zce_tls_recv_cb, NULL);
@@ -210,19 +189,14 @@ static int zce_tls_connect(zce_tls_t *t, const char *host, int port) {
     int loops = 0;
     while ((ret = mbedtls_ssl_handshake(&t->ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: TLS handshake failed ret=%d", ret);
             return ret;
         }
-        if (++loops > 100) {
-            addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: TLS handshake timeout ret=%d", ret);
-            return ret;
-        }
+        if (++loops > 100) return ret;
         rtos_delay_milliseconds(50);
         if (s_ws_stop) return -1;
     }
 
     t->ready = true;
-    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_WS: TLS connected");
     return 0;
 }
 
@@ -260,7 +234,7 @@ static int zce_net_read(zce_tls_t *t, uint8_t *buf, int len) {
 // WebSocket helpers
 // ------------------------------------------------------------
 static int zce_ws_write_all(void *ctx, const uint8_t *buf, int len) {
-#if MQTT_USE_TLS
+#if ZCE_WS_CMD_USE_TLS
     return zce_net_write((zce_tls_t *)ctx, buf, len);
 #else
     (void)ctx; (void)buf; (void)len;
@@ -269,7 +243,7 @@ static int zce_ws_write_all(void *ctx, const uint8_t *buf, int len) {
 }
 
 static int zce_ws_read_some(void *ctx, uint8_t *buf, int len) {
-#if MQTT_USE_TLS
+#if ZCE_WS_CMD_USE_TLS
     return zce_net_read((zce_tls_t *)ctx, buf, len);
 #else
     (void)ctx; (void)buf; (void)len;
@@ -396,7 +370,6 @@ static int zce_ws_handshake(void *ctx) {
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
         "Sec-WebSocket-Version: 13\r\n"
-        "User-Agent: ZCE-EM/1.4\r\n"
         "\r\n",
         ZCE_WS_PATH, ZCE_WS_HOST);
 
@@ -412,10 +385,9 @@ static int zce_ws_handshake(void *ctx) {
     }
 
     if (strstr(resp, "101") == NULL || strstr(resp, "Upgrade") == NULL) {
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: bad handshake response: %.80s", resp);
+        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: bad handshake response");
         return -1;
     }
-    addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_WS: WS handshake OK");
     return 0;
 }
 
@@ -520,7 +492,7 @@ static void zce_ws_thread_main(beken_thread_arg_t arg) {
             continue;
         }
 
-#if MQTT_USE_TLS
+#if ZCE_WS_CMD_USE_TLS
         zce_tls_t tls;
         zce_tls_init(&tls);
         addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_WS: connecting wss://%s%s", ZCE_WS_HOST, ZCE_WS_PATH);
@@ -536,7 +508,7 @@ static void zce_ws_thread_main(beken_thread_arg_t arg) {
         s_ws_connected = false;
         zce_tls_free(&tls);
 #else
-        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: MQTT_USE_TLS disabled, WSS command channel unavailable");
+        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN, "ZCE_WS: TLS disabled, WSS command channel unavailable");
 #endif
 
         if (!s_ws_stop) rtos_delay_milliseconds(ZCE_WS_RECONNECT_DELAY_MS);
