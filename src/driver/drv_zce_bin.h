@@ -14,4 +14,9 @@ void ZCE_BIN_Init(void);
 void ZCE_BIN_Every1Second(void);
 void ZCE_BIN_RunQuickTick(void);
 void ZCE_BIN_Stop(void);
+
 const char *ZCE_BIN_GetDeviceId(void);
+
+void ZCE_BIN_RequestTelemetryNow(void);
+
+void ZCE_BIN_SetRelayCommand(int value);

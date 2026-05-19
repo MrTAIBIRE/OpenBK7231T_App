@@ -63,6 +63,7 @@
 #include "lwip/altcp_tcp.h"
 #include "lwip/altcp_tls.h"
 #include <string.h>
+#include <stdio.h>
 
 #if LWIP_TCP && LWIP_CALLBACK_API
 
@@ -79,6 +80,207 @@
 #define MQTT_DEBUG_WARN_STATE   (MQTT_DEBUG | LWIP_DBG_LEVEL_WARNING | LWIP_DBG_STATE)
 #define MQTT_DEBUG_SERIOUS      (MQTT_DEBUG | LWIP_DBG_LEVEL_SERIOUS)
 
+
+#define MQTT_ZCE_WS_RX_BUFFER_SIZE 2048
+#define MQTT_ZCE_WS_SEND_BUFFER_SIZE (MQTT_OUTPUT_RINGBUF_SIZE + 16)
+
+static u8_t zce_mqtt_ws_enabled = 0;
+static u8_t zce_mqtt_ws_handshake_done = 0;
+static char zce_mqtt_ws_host[128] = {0};
+static const char *zce_mqtt_ws_path = "/mqtt";
+static u8_t zce_mqtt_ws_rx[MQTT_ZCE_WS_RX_BUFFER_SIZE];
+static u16_t zce_mqtt_ws_rx_len = 0;
+static u8_t zce_mqtt_ws_send[MQTT_ZCE_WS_SEND_BUFFER_SIZE];
+
+static u16_t mqtt_ringbuf_len(struct mqtt_ringbuf_t *rb);
+static mqtt_connection_status_t mqtt_parse_incoming(mqtt_client_t *client, struct pbuf *p);
+static void mqtt_close(mqtt_client_t *client, mqtt_connection_status_t reason);
+
+void mqtt_set_websocket_config(const char *host, const char *path, int enable)
+{
+  zce_mqtt_ws_enabled = enable ? 1 : 0;
+  zce_mqtt_ws_handshake_done = 0;
+  zce_mqtt_ws_rx_len = 0;
+  if (host && host[0]) {
+    strncpy(zce_mqtt_ws_host, host, sizeof(zce_mqtt_ws_host) - 1);
+    zce_mqtt_ws_host[sizeof(zce_mqtt_ws_host) - 1] = 0;
+  } else {
+    zce_mqtt_ws_host[0] = 0;
+  }
+  if (path && path[0]) {
+    zce_mqtt_ws_path = path;
+  } else {
+    zce_mqtt_ws_path = "/mqtt";
+  }
+}
+
+static u8_t zce_mqtt_ringbuf_peek(struct mqtt_ringbuf_t *rb, u16_t off)
+{
+  u16_t idx = rb->get + off;
+  if (idx >= MQTT_OUTPUT_RINGBUF_SIZE) {
+    idx -= MQTT_OUTPUT_RINGBUF_SIZE;
+  }
+  return rb->buf[idx];
+}
+
+static u16_t zce_mqtt_ws_next_packet_len(struct mqtt_ringbuf_t *rb)
+{
+  u16_t avail = mqtt_ringbuf_len(rb);
+  u16_t multiplier = 1;
+  u16_t value = 0;
+  u16_t i;
+
+  if (avail < 2) {
+    return 0;
+  }
+  for (i = 1; i < 5; i++) {
+    u8_t encoded;
+    if (avail <= i) {
+      return 0;
+    }
+    encoded = zce_mqtt_ringbuf_peek(rb, i);
+    value += (encoded & 127) * multiplier;
+    if ((encoded & 128) == 0) {
+      u16_t total = i + 1 + value;
+      if (avail >= total) {
+        return total;
+      }
+      return 0;
+    }
+    multiplier *= 128;
+  }
+  return 0;
+}
+
+static err_t zce_mqtt_ws_send_handshake(struct altcp_pcb *tpcb)
+{
+  char req[320];
+  int len;
+  const char *host = zce_mqtt_ws_host[0] ? zce_mqtt_ws_host : "broker.emqx.io";
+  const char *path = zce_mqtt_ws_path ? zce_mqtt_ws_path : "/mqtt";
+
+  len = snprintf(req, sizeof(req),
+    "GET %s HTTP/1.1\r\n"
+    "Host: %s\r\n"
+    "Upgrade: websocket\r\n"
+    "Connection: Upgrade\r\n"
+    "Sec-WebSocket-Key: d2F0dGVsX2VtX3pjZQ==\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    "Sec-WebSocket-Protocol: mqtt\r\n"
+    "\r\n",
+    path, host);
+
+  if (len <= 0 || len >= (int)sizeof(req)) {
+    return ERR_VAL;
+  }
+  if (altcp_write(tpcb, req, (u16_t)len, TCP_WRITE_FLAG_COPY) != ERR_OK) {
+    return ERR_VAL;
+  }
+  altcp_output(tpcb);
+  return ERR_OK;
+}
+
+static void zce_mqtt_ws_shift_rx(u16_t n)
+{
+  if (n >= zce_mqtt_ws_rx_len) {
+    zce_mqtt_ws_rx_len = 0;
+    return;
+  }
+  memmove(zce_mqtt_ws_rx, zce_mqtt_ws_rx + n, zce_mqtt_ws_rx_len - n);
+  zce_mqtt_ws_rx_len -= n;
+}
+
+static int zce_mqtt_ws_find_http_end(void)
+{
+  u16_t i;
+  if (zce_mqtt_ws_rx_len < 4) {
+    return -1;
+  }
+  for (i = 0; i <= zce_mqtt_ws_rx_len - 4; i++) {
+    if (zce_mqtt_ws_rx[i] == '\r' && zce_mqtt_ws_rx[i+1] == '\n' &&
+        zce_mqtt_ws_rx[i+2] == '\r' && zce_mqtt_ws_rx[i+3] == '\n') {
+      return (int)i + 4;
+    }
+  }
+  return -1;
+}
+
+static err_t zce_mqtt_ws_parse_frames(mqtt_client_t *client)
+{
+  while (zce_mqtt_ws_rx_len >= 2) {
+    u8_t b0 = zce_mqtt_ws_rx[0];
+    u8_t b1 = zce_mqtt_ws_rx[1];
+    u8_t opcode = b0 & 0x0F;
+    u8_t masked = b1 & 0x80;
+    u32_t plen = b1 & 0x7F;
+    u16_t pos = 2;
+    u8_t mask[4] = {0,0,0,0};
+    u32_t i;
+    mqtt_connection_status_t res;
+    struct pbuf *q;
+
+    if (plen == 126) {
+      if (zce_mqtt_ws_rx_len < 4) return ERR_OK;
+      plen = ((u32_t)zce_mqtt_ws_rx[2] << 8) | zce_mqtt_ws_rx[3];
+      pos = 4;
+    } else if (plen == 127) {
+      /* Very large WebSocket frames are not expected for MQTT control packets here. */
+      return ERR_VAL;
+    }
+    if (masked) {
+      if (zce_mqtt_ws_rx_len < pos + 4) return ERR_OK;
+      memcpy(mask, zce_mqtt_ws_rx + pos, 4);
+      pos += 4;
+    }
+    if (zce_mqtt_ws_rx_len < pos + plen) return ERR_OK;
+
+    if (opcode == 0x8) { /* close */
+      return ERR_CLSD;
+    }
+    if (opcode == 0x9) { /* ping: minimal pong support */
+      u8_t pong[2] = {0x8A, 0x00};
+      altcp_write(client->conn, pong, sizeof(pong), TCP_WRITE_FLAG_COPY);
+      altcp_output(client->conn);
+      zce_mqtt_ws_shift_rx((u16_t)(pos + plen));
+      continue;
+    }
+    if (opcode != 0x2 && opcode != 0x0) {
+      zce_mqtt_ws_shift_rx((u16_t)(pos + plen));
+      continue;
+    }
+
+    q = pbuf_alloc(PBUF_RAW, (u16_t)plen, PBUF_RAM);
+    if (q == NULL) {
+      return ERR_MEM;
+    }
+    for (i = 0; i < plen; i++) {
+      ((u8_t*)q->payload)[i] = zce_mqtt_ws_rx[pos + i] ^ (masked ? mask[i & 3] : 0);
+    }
+    res = mqtt_parse_incoming(client, q);
+    pbuf_free(q);
+    zce_mqtt_ws_shift_rx((u16_t)(pos + plen));
+    if (res != MQTT_CONNECT_ACCEPTED) {
+      mqtt_close(client, res);
+      return ERR_ABRT;
+    }
+    if (client->keep_alive != 0) {
+      client->server_watchdog = 0;
+    }
+  }
+  return ERR_OK;
+}
+
+static void zce_mqtt_ws_append_rx(struct pbuf *p)
+{
+  u16_t copy_len;
+  if (!p || p->tot_len == 0) return;
+  if (p->tot_len > MQTT_ZCE_WS_RX_BUFFER_SIZE - zce_mqtt_ws_rx_len) {
+    zce_mqtt_ws_rx_len = 0;
+  }
+  copy_len = LWIP_MIN(p->tot_len, MQTT_ZCE_WS_RX_BUFFER_SIZE - zce_mqtt_ws_rx_len);
+  pbuf_copy_partial(p, zce_mqtt_ws_rx + zce_mqtt_ws_rx_len, copy_len, 0);
+  zce_mqtt_ws_rx_len += copy_len;
+}
 
 
 /**
@@ -240,9 +442,62 @@ mqtt_output_send(struct mqtt_ringbuf_t *rb, struct altcp_pcb *tpcb)
 {
   err_t err;
   u8_t wrap = 0;
-  u16_t ringbuf_lin_len = mqtt_ringbuf_linear_read_length(rb);
-  u16_t send_len = altcp_sndbuf(tpcb);
+  u16_t ringbuf_lin_len;
+  u16_t send_len;
+
   LWIP_ASSERT("mqtt_output_send: tpcb != NULL", tpcb != NULL);
+
+  if (zce_mqtt_ws_enabled) {
+    u16_t pkt_len;
+    u16_t hdr_len;
+    u16_t i;
+    const u8_t mask[4] = { 0x12, 0x34, 0x56, 0x78 };
+
+    if (!zce_mqtt_ws_handshake_done) {
+      return;
+    }
+
+    pkt_len = zce_mqtt_ws_next_packet_len(rb);
+    if (pkt_len == 0) {
+      return;
+    }
+    if (pkt_len + 8 > MQTT_ZCE_WS_SEND_BUFFER_SIZE) {
+      LWIP_DEBUGF(MQTT_DEBUG_WARN, ("mqtt_output_send: MQTT packet too large for WebSocket frame\n"));
+      return;
+    }
+
+    zce_mqtt_ws_send[0] = 0x82; /* FIN + binary */
+    if (pkt_len < 126) {
+      zce_mqtt_ws_send[1] = 0x80 | (u8_t)pkt_len;
+      hdr_len = 2;
+    } else {
+      zce_mqtt_ws_send[1] = 0x80 | 126;
+      zce_mqtt_ws_send[2] = (u8_t)(pkt_len >> 8);
+      zce_mqtt_ws_send[3] = (u8_t)(pkt_len & 0xFF);
+      hdr_len = 4;
+    }
+    memcpy(zce_mqtt_ws_send + hdr_len, mask, 4);
+    hdr_len += 4;
+
+    for (i = 0; i < pkt_len; i++) {
+      zce_mqtt_ws_send[hdr_len + i] = zce_mqtt_ringbuf_peek(rb, i) ^ mask[i & 3];
+    }
+
+    if (altcp_sndbuf(tpcb) < hdr_len + pkt_len) {
+      return;
+    }
+    err = altcp_write(tpcb, zce_mqtt_ws_send, hdr_len + pkt_len, TCP_WRITE_FLAG_COPY);
+    if (err == ERR_OK) {
+      mqtt_ringbuf_advance_get_idx(rb, pkt_len);
+      altcp_output(tpcb);
+    } else {
+      LWIP_DEBUGF(MQTT_DEBUG_WARN, ("mqtt_output_send: WS send failed with err %d (\"%s\")\n", err, lwip_strerr(err)));
+    }
+    return;
+  }
+
+  ringbuf_lin_len = mqtt_ringbuf_linear_read_length(rb);
+  send_len = altcp_sndbuf(tpcb);
 
   if (send_len == 0 || ringbuf_lin_len == 0) {
     return;
@@ -252,22 +507,18 @@ mqtt_output_send(struct mqtt_ringbuf_t *rb, struct altcp_pcb *tpcb)
                                  send_len, ringbuf_lin_len, rb->get, rb->put));
 
   if (send_len > ringbuf_lin_len) {
-    /* Space in TCP output buffer is larger than available in ring buffer linear portion */
     send_len = ringbuf_lin_len;
-    /* Wrap around if more data in ring buffer after linear portion */
     wrap = (mqtt_ringbuf_len(rb) > ringbuf_lin_len);
   }
   err = altcp_write(tpcb, mqtt_ringbuf_get_ptr(rb), send_len, TCP_WRITE_FLAG_COPY | (wrap ? TCP_WRITE_FLAG_MORE : 0));
   if ((err == ERR_OK) && wrap) {
     mqtt_ringbuf_advance_get_idx(rb, send_len);
-    /* Use the lesser one of ring buffer linear length and TCP send buffer size */
     send_len = LWIP_MIN(altcp_sndbuf(tpcb), mqtt_ringbuf_linear_read_length(rb));
     err = altcp_write(tpcb, mqtt_ringbuf_get_ptr(rb), send_len, TCP_WRITE_FLAG_COPY);
   }
 
   if (err == ERR_OK) {
     mqtt_ringbuf_advance_get_idx(rb, send_len);
-    /* Flush */
     altcp_output(tpcb);
   } else {
     LWIP_DEBUGF(MQTT_DEBUG_WARN, ("mqtt_output_send: Send failed with err %d (\"%s\")\n", err, lwip_strerr(err)));
@@ -555,6 +806,11 @@ mqtt_close(mqtt_client_t *client, mqtt_connection_status_t reason)
       LWIP_DEBUGF(MQTT_DEBUG_TRACE, ("mqtt_close: Close err=%s\n", lwip_strerr(res)));
     }
     client->conn = NULL;
+  }
+
+  if (zce_mqtt_ws_enabled) {
+    zce_mqtt_ws_handshake_done = 0;
+    zce_mqtt_ws_rx_len = 0;
   }
 
   /* Remove all pending requests */
@@ -960,6 +1216,42 @@ mqtt_tcp_recv_cb(void *arg, struct altcp_pcb *pcb, struct pbuf *p, err_t err)
 
     /* Tell remote that data has been received */
     altcp_recved(pcb, p->tot_len);
+
+    if (zce_mqtt_ws_enabled) {
+      int http_end;
+      zce_mqtt_ws_append_rx(p);
+      pbuf_free(p);
+
+      if (!zce_mqtt_ws_handshake_done) {
+        http_end = zce_mqtt_ws_find_http_end();
+        if (http_end < 0) {
+          return ERR_OK;
+        }
+        /* A minimal but strict enough check for the broker WebSocket upgrade. */
+        if (zce_mqtt_ws_rx_len < MQTT_ZCE_WS_RX_BUFFER_SIZE) {
+          zce_mqtt_ws_rx[zce_mqtt_ws_rx_len] = 0;
+        } else {
+          zce_mqtt_ws_rx[MQTT_ZCE_WS_RX_BUFFER_SIZE - 1] = 0;
+        }
+        if (strstr((const char*)zce_mqtt_ws_rx, "101") == NULL) {
+          mqtt_close(client, MQTT_CONNECT_DISCONNECTED);
+          return ERR_CLSD;
+        }
+        zce_mqtt_ws_shift_rx((u16_t)http_end);
+        zce_mqtt_ws_handshake_done = 1;
+        client->conn_state = MQTT_CONNECTING;
+        sys_timeout(MQTT_CYCLIC_TIMER_INTERVAL * 1000, mqtt_cyclic_timer, client);
+        client->cyclic_tick = 0;
+        mqtt_output_send(&client->output, client->conn);
+      }
+
+      err = zce_mqtt_ws_parse_frames(client);
+      if (err != ERR_OK) {
+        mqtt_close(client, MQTT_CONNECT_DISCONNECTED);
+      }
+      return ERR_OK;
+    }
+
     res = mqtt_parse_incoming(client, p);
     pbuf_free(p);
 
@@ -1071,6 +1363,14 @@ mqtt_tcp_connect_cb(void *arg, struct altcp_pcb *tpcb, err_t err)
   altcp_poll(tpcb, mqtt_tcp_poll_cb, 2);
 
   LWIP_DEBUGF(MQTT_DEBUG_TRACE, ("mqtt_tcp_connect_cb: TCP connection established to server\n"));
+
+  if (zce_mqtt_ws_enabled) {
+    zce_mqtt_ws_handshake_done = 0;
+    zce_mqtt_ws_rx_len = 0;
+    zce_mqtt_ws_send_handshake(tpcb);
+    return ERR_OK;
+  }
+
   /* Enter MQTT connect state */
   client->conn_state = MQTT_CONNECTING;
 

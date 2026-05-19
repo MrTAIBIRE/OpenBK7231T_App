@@ -1,0 +1,50 @@
+ZCE EM option B adaptation - MQTT over WebSocket
+================================================
+
+Based on DEVICE_INTEGRATION_V1.4.docx, option B means the device must use the MQTT broker endpoint:
+  ws://broker.emqx.io:8083/mqtt
+
+Changes applied:
+
+1) libraries/mqtt_patched.c
+   - Added a minimal WebSocket transport wrapper around the existing lwIP MQTT client.
+   - Performs HTTP WebSocket upgrade to /mqtt.
+   - Sends MQTT control packets inside masked binary WebSocket frames.
+   - Unwraps incoming binary WebSocket frames and feeds MQTT payloads back to the existing MQTT parser.
+   - This keeps the existing MQTT publish/subscription logic while changing the transport from raw TCP MQTT to MQTT-over-WebSocket.
+
+2) src/mqtt/new_mqtt.c
+   - MQTT transport is now fixed in firmware for staging:
+       host = broker.emqx.io
+       port = 8083
+       path = /mqtt
+       user/pass = empty
+   - Calls mqtt_set_websocket_config(...) before mqtt_client_connect(...).
+   - LWT topic changed to:
+       zce/<mqtt_client_id>/availability
+     payload: offline, QoS 1, retain true.
+   - On connect, publishes:
+       zce/<mqtt_client_id>/availability = online
+     QoS 1, retain true.
+
+3) src/new_cfg.c
+   - Default MQTT values updated for option B:
+       broker.emqx.io:8083
+       empty username/password
+   - Default MQTT client ID now uses:
+       ZCE-EM-<shortDeviceName>
+
+4) src/driver/drv_zce_bin.c / .h
+   - Added ZCE_BIN_GetDeviceId().
+   - Added status topic publication every 30 seconds:
+       zce/<device_id>/status
+   - Telemetry publication QoS changed to 1.
+   - Binary frame offset 4..10 is now reserved zero according to protocol v1.4.
+   - Existing telemetry topic remains:
+       zce/<device_id>/telemetry
+
+Important limitations / next step:
+- This patch adapts MQTT transport to ws://broker.emqx.io:8083/mqtt.
+- It does not yet implement the separate backend command WebSocket client:
+    wss://mqtt-service-staging-894834276803.europe-west1.run.app/ws/device
+  That is the inbound relay command channel from section 4 of the doc and should be implemented as a separate client module if required.

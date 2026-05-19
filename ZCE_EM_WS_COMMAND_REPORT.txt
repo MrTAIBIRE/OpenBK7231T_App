@@ -1,0 +1,41 @@
+ZCE EM WebSocket command implementation
+=======================================
+
+Implemented one inbound cloud command path only:
+  wss://mqtt-service-staging-894834276803.europe-west1.run.app/ws/device
+
+No MQTT command subscription was added. MQTT remains outbound-only for:
+  zce/<device_id>/telemetry
+  zce/<device_id>/status
+  zce/<device_id>/availability
+
+Files changed/added:
+  src/driver/drv_zce_ws_cmd.c   (new command WebSocket client)
+  src/driver/drv_zce_ws_cmd.h   (new command WebSocket API)
+  src/driver/drv_zce_bin.c      (starts/stops WS client, exposes relay command state)
+  src/driver/drv_zce_bin.h      (declares ZCE_BIN relay/telemetry helpers)
+
+Command flow:
+  1. ZCE_BIN_Init builds the ZCE device_id.
+  2. ZCE_WS_CMD_Init starts one background thread.
+  3. The thread connects via TLS to /ws/device.
+  4. It upgrades to WebSocket.
+  5. It sends: {"type":"hello","device_id":"<ZCE id>"}
+  6. On {"cmd":"relay","value":0|1}:
+       - runs setChannel 1 <value>
+       - the existing TuyaMCU mapping sends DP 0x10 to the MCU
+       - updates the relay_cmd flag used by the ZCE telemetry frame
+       - sends ack: {"type":"ack","cmd":"relay","value":X,"ts":...}
+       - requests a fresh telemetry frame
+  7. On {"type":"ping"}, replies {"type":"pong"}.
+  8. On WebSocket ping frame, replies with a pong frame.
+  9. On disconnect, reconnects after ~5 seconds.
+
+Why no duplicate command path:
+  - It does not subscribe to MQTT commands.
+  - It does not call tuyaMcu_sendState directly and setChannel at the same time.
+  - Relay control is applied through setChannel 1 only, so the existing TuyaMCU channel mapping remains the single relay-to-MCU path.
+
+Important runtime note:
+  - This WSS client uses mbedTLS. MQTT_USE_TLS must remain enabled in the BK7238 build.
+  - Certificate verification is optional because this firmware branch does not carry a CA bundle.

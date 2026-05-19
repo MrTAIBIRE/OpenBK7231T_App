@@ -22,7 +22,6 @@
 #include "../driver/drv_ntp.h"
 #include "../driver/drv_deviceclock.h"		// to set clock via Javascript in pmntp
 #include "../driver/drv_local.h"
-#include "../driver/drv_zce_bin.h"
 #ifdef PLATFORM_BEKEN
 #include "start_type_pub.h"
 #endif
@@ -260,7 +259,7 @@ int http_fn_index(http_request_t* request) {
 	poststr(request, "<h2>ZCE EM setup</h2>");
 	poststr(request, "<p>This page is limited to Wi-Fi configuration and OTA firmware update.</p>");
 	poststr(request, "<fieldset><legend>Status</legend>");
-	hprintf255(request, "Device ID: <b>%s</b><br>", ZCE_BIN_GetDeviceId());
+	hprintf255(request, "Device name: <b>%s</b><br>", CFG_GetDeviceName());
 	hprintf255(request, "Configured SSID: <b>%s</b><br>", CFG_GetWiFiSSID());
 	hprintf255(request, "Uptime: <span id=\"onlineFor\" data-initial=\"%i\">-</span><br>", g_secondsElapsed);
 	poststr(request, "</fieldset>");

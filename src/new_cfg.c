@@ -108,16 +108,16 @@ void CFG_SetDefaultConfig() {
 
 	memset(&g_cfg,0,sizeof(mainConfig_t));
 	g_cfg.version = MAIN_CFG_VERSION;
-	g_cfg.mqtt_port = 1883;
+	g_cfg.mqtt_port = 8083;
 	g_cfg.ident0 = CFG_IDENT_0;
 	g_cfg.ident1 = CFG_IDENT_1;
 	g_cfg.ident2 = CFG_IDENT_2;
 	g_cfg.timeRequiredToMarkBootSuccessfull = DEFAULT_BOOT_SUCCESS_TIME;
 	strcpy(g_cfg.ping_host,"192.168.0.1");
-	//strcpy(g_cfg.mqtt_host, "192.168.0.113");		//Let default mqtt_host be empty
+	strcpy(g_cfg.mqtt_host, "broker.emqx.io");
 	// g_cfg.mqtt_clientId is set as shortDeviceName below
-	strcpy(g_cfg.mqtt_userName, "homeassistant");
-	strcpy(g_cfg.mqtt_pass, "qqqqqqqqqq");
+	strcpy(g_cfg.mqtt_userName, "");
+	strcpy(g_cfg.mqtt_pass, "");
 	// already zeroed but just to remember, open AP by default
 	g_cfg.wifi_ssid[0] = 0;
 	g_cfg.wifi_pass[0] = 0;
@@ -126,8 +126,8 @@ void CFG_SetDefaultConfig() {
 	strcpy(g_cfg.webappRoot, "");
 	// Long unique device name, like ZCE_EM7231T_AABBCCDD
 	snprintf(g_cfg.longDeviceName, sizeof(g_cfg.longDeviceName), "ZCE_EM_%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
-	snprintf(g_cfg.shortDeviceName, sizeof(g_cfg.shortDeviceName), "ZCEEM%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
-	strcpy_safe(g_cfg.mqtt_clientId, g_cfg.shortDeviceName, sizeof(g_cfg.mqtt_clientId));
+	snprintf(g_cfg.shortDeviceName, sizeof(g_cfg.shortDeviceName), "%02X%02X%02X%02X", mac[2], mac[3], mac[4], mac[5]);
+	snprintf(g_cfg.mqtt_clientId, sizeof(g_cfg.mqtt_clientId), "ZCE-EM-%s", g_cfg.shortDeviceName);
 
 	// group topic will be unique for each platform, so it's easy
 	// to do group OTA without worrying about feeding wrong RBL for wrong platform
@@ -860,7 +860,7 @@ void CFG_InitAndLoad() {
 	// copy shortDeviceName to MQTT Client ID, set version=3
 	if (g_cfg.version<3) {
 		addLogAdv(LOG_WARN, LOG_FEATURE_CFG, "CFG_InitAndLoad: Old config version found, updating to v3.");
-		strcpy_safe(g_cfg.mqtt_clientId, g_cfg.shortDeviceName, sizeof(g_cfg.mqtt_clientId));
+		snprintf(g_cfg.mqtt_clientId, sizeof(g_cfg.mqtt_clientId), "ZCE-EM-%s", g_cfg.shortDeviceName);
 		g_cfg_pendingChanges++;
 	}
 #if ALLOW_WEB_PASSWORD

@@ -222,6 +222,11 @@ int g_MqttPublishItemsQueued = 0;   //Items in the queue waiting to be published
 
 // from mqtt.c
 extern void mqtt_disconnect(mqtt_client_t* client);
+extern void mqtt_set_websocket_config(const char *host, const char *path, int enable);
+
+#define ZCE_MQTT_WS_HOST "broker.emqx.io"
+#define ZCE_MQTT_WS_PORT 8083
+#define ZCE_MQTT_WS_PATH "/mqtt"
 
 static int g_my_reconnect_mqtt_after_time = -1;
 ip_addr_t mqtt_ip LWIP_MQTT_EXAMPLE_IPADDR_INIT;
@@ -1117,7 +1122,7 @@ static void mqtt_request_cb(void* arg, err_t err)
 static void mqtt_connection_cb(mqtt_client_t* client, void* arg, mqtt_connection_status_t status)
 {
 	int i;
-	char tmp[CGF_MQTT_CLIENT_ID_SIZE + 16];
+	char tmp[128];
 	const char* clientId;
 	err_t err = ERR_OK;
 	const struct mqtt_connect_client_info_t* client_info = (const struct mqtt_connect_client_info_t*)arg;
@@ -1168,9 +1173,9 @@ static void mqtt_connection_cb(mqtt_client_t* client, void* arg, mqtt_connection
 
 		clientId = CFG_GetMQTTClientId();
 
-		snprintf(tmp, sizeof(tmp), "%s/connected", clientId);
+		snprintf(tmp, sizeof(tmp), "zce/%s/availability", clientId);
 		//LOCK_TCPIP_CORE();
-		err = mqtt_publish(client, tmp, "online", strlen("online"), 2, true, mqtt_pub_request_cb, 0);
+		err = mqtt_publish(client, tmp, "online", strlen("online"), 1, true, mqtt_pub_request_cb, 0);
 		//UNLOCK_TCPIP_CORE();
 		if (err != ERR_OK) {
 			addLogAdv(LOG_ERROR, LOG_FEATURE_MQTT, "Publish err: %d", err);
@@ -1223,21 +1228,15 @@ static int MQTT_do_connect(mqtt_client_t* client)
 	int mqtt_port;
 	int res;
 	struct hostent* hostEntry;
-	char will_topic[CGF_MQTT_CLIENT_ID_SIZE + 16];
+	char will_topic[128];
 	bool mqtt_use_tls, mqtt_verify_tls_cert;
 
-	mqtt_host = CFG_GetMQTTHost();
-
-	if (!mqtt_host[0]) {
-		addLogAdv(LOG_INFO, LOG_FEATURE_MQTT, "mqtt_host empty, not starting mqtt");
-		snprintf(mqtt_status_message, sizeof(mqtt_status_message), "mqtt_host empty, not starting mqtt");
-		return 0;
-	}
-
-	mqtt_userName = CFG_GetMQTTUserName();
-	mqtt_pass = CFG_GetMQTTPass();
+	/* ZCE EM option B: MQTT transport is fixed in firmware and uses MQTT over WebSocket. */
+	mqtt_host = ZCE_MQTT_WS_HOST;
+	mqtt_userName = "";
+	mqtt_pass = "";
 	mqtt_clientID = CFG_GetMQTTClientId();
-	mqtt_port = CFG_GetMQTTPort();
+	mqtt_port = ZCE_MQTT_WS_PORT;
 #if MQTT_USE_TLS
 	mqtt_use_tls = CFG_GetMQTTUseTls();
 	mqtt_verify_tls_cert = CFG_GetMQTTVerifyTlsCert();
@@ -1270,7 +1269,7 @@ static int MQTT_do_connect(mqtt_client_t* client)
 		mqtt_client_info.client_user = 0;
 	}
 
-	sprintf(will_topic, "%s/connected", mqtt_clientID);
+	snprintf(will_topic, sizeof(will_topic), "zce/%s/availability", mqtt_clientID);
 	mqtt_client_info.will_topic = will_topic;
 	mqtt_client_info.will_msg = "offline";
 	mqtt_client_info.will_retain = true;
@@ -1390,6 +1389,11 @@ static int MQTT_do_connect(mqtt_client_t* client)
 		  otherwise mqtt_connection_cb will be called with connection result after attempting
 		  to establish a connection with the server.
 		  For now MQTT version 3.1.1 is always used */
+
+		/* ZCE EM protocol v1.4 staging uses MQTT over WebSocket: ws://broker.emqx.io:8083/mqtt.
+		 * The lwIP MQTT client is kept, but its TCP transport is wrapped in WebSocket
+		 * by libraries/mqtt_patched.c when this config is enabled. */
+		mqtt_set_websocket_config(mqtt_host, ZCE_MQTT_WS_PATH, mqtt_port == ZCE_MQTT_WS_PORT);
 
 		LOCK_TCPIP_CORE();
 		res = mqtt_client_connect(mqtt_client,

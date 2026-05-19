@@ -27,6 +27,7 @@
 // ============================================================
 
 #include "drv_zce_bin.h"
+#include "drv_zce_ws_cmd.h"
 #include "../logging/logging.h"
 #include "../obk_config.h"
 
@@ -40,6 +41,7 @@
 #include "../mqtt/new_mqtt.h"
 #include "../cmnds/cmd_public.h"
 #include "../new_cfg.h"
+#include "../hal/hal_wifi.h"
 
 // ---- API channels OBK ----
 extern int CHANNEL_Get(int index);
@@ -68,10 +70,15 @@ extern int CHANNEL_Get(int index);
 // ---- Buffers globaux ----
 static char g_deviceId[PRODUCT_ID_SIZE] = {0};
 static char g_topicTelemetry[96]        = {0};
+static char g_topicStatus[96]           = {0};
+static char g_topicAvailability[96]     = {0};
 static char g_uuid[40]                  = {0};
 static char g_model[16]                 = {0};
 static bool g_initialized               = false;
 static int  g_zce_seconds               = 0;
+static bool g_relayCmdKnown             = false;
+static int  g_lastRelayCmd              = 0;
+static volatile bool g_publishTelemetryNow = false;
 
 // The original Tuya Wi-Fi firmware for JIUJI JJMVPD-63LWS sends this command
 // periodically to the MCU:
@@ -144,15 +151,15 @@ static void buildDeviceId(void) {
 
     snprintf(g_topicTelemetry, sizeof(g_topicTelemetry),
              "%s/%s/telemetry", MQTT_TOPIC_PREFIX, g_deviceId);
+    snprintf(g_topicStatus, sizeof(g_topicStatus),
+             "%s/%s/status", MQTT_TOPIC_PREFIX, g_deviceId);
+    snprintf(g_topicAvailability, sizeof(g_topicAvailability),
+             "%s/%s/availability", MQTT_TOPIC_PREFIX, g_deviceId);
 
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
         "ZCE_BIN: device_id=%s topic=%s", g_deviceId, g_topicTelemetry);
 }
 
-// ============================================================
-// Public getter used by the ZCE EM HTTP page.
-// It returns the same device_id used by ZCE telemetry topics.
-// ============================================================
 const char *ZCE_BIN_GetDeviceId(void) {
     if (g_deviceId[0] == '\0') {
         buildDeviceId();
@@ -191,7 +198,7 @@ static int buildBinaryFrame(uint8_t* frame) {
     int energy_kwh100 = CHANNEL_Get(CH_ENERGY);     // kWh×100
     int pf_raw      = CHANNEL_Get(CH_POWERFACT);    // PF×1000
     int f_raw       = CHANNEL_Get(CH_FREQ);         // Hz×10
-    int relay_cmd   = CHANNEL_Get(CH_RELAY_CMD);
+    int relay_cmd   = g_relayCmdKnown ? g_lastRelayCmd : CHANNEL_Get(CH_RELAY_CMD);
 
     // Conversion puissance : W → W×10 pour la trame
     int p_raw = p_w * 10;
@@ -207,19 +214,12 @@ static int buildBinaryFrame(uint8_t* frame) {
     flags |= (1 << 2);
     if (relay_cmd)   flags |= (1 << 3);
 
-    // MAC
-    uint8_t mac[6] = {0};
-    parseMacStr(g_wifi_bssid, mac);
-
     // Header
     frame[0] = ZCE_MAGIC_0;
     frame[1] = ZCE_MAGIC_1;
     frame[2] = ZCE_VERSION;
     frame[3] = flags;
-    frame[4] = 0x00;
-
-    // MAC (offsets 5-10)
-    memcpy(&frame[5], mac, 6);
+    // Offset 4-10 are reserved by protocol v1.4 and remain zero.
 
     // Length uint16 LE (offsets 11-12)
     frame[11] = ZCE_DATA_LEN & 0xFF;
@@ -292,7 +292,7 @@ static void publishBinaryFrame(const uint8_t* frame, int len) {
         g_topicTelemetry,
         (const void*)frame,
         (u16_t)len,
-        0, 0, NULL, NULL
+        1, 0, NULL, NULL
     );
 
     if (err != ERR_OK) {
@@ -300,6 +300,41 @@ static void publishBinaryFrame(const uint8_t* frame, int len) {
             "ZCE_BIN: mqtt_publish failed err=%d", (int)err);
     }
 #endif
+}
+
+static void publishStatusJson(void) {
+#if ENABLE_MQTT
+    char payload[256];
+    err_t err;
+
+    if (!mqtt_client) return;
+    if (!Main_HasMQTTConnected()) return;
+
+    snprintf(payload, sizeof(payload),
+        "{\"device_id\":\"%s\",\"fw\":\"1.4.0\",\"wifi\":\"%s\",\"rssi\":%d,\"mqtt\":\"ok\",\"relay_state_known\":true,\"uptime_s\":%lu}",
+        g_deviceId,
+        CFG_GetWiFiSSID(),
+        HAL_GetWifiStrength(),
+        (unsigned long)g_secondsElapsed);
+
+    err = mqtt_publish(mqtt_client, g_topicStatus, payload, strlen(payload), 1, 0, NULL, NULL);
+    if (err != ERR_OK) {
+        addLogAdv(LOG_WARN, LOG_FEATURE_MAIN,
+            "ZCE_BIN: status publish failed err=%d", (int)err);
+    }
+#endif
+}
+
+// ============================================================
+// API for backend command WebSocket
+// ============================================================
+void ZCE_BIN_SetRelayCommand(int value) {
+    g_lastRelayCmd = value ? 1 : 0;
+    g_relayCmdKnown = true;
+}
+
+void ZCE_BIN_RequestTelemetryNow(void) {
+    g_publishTelemetryNow = true;
 }
 
 // ============================================================
@@ -373,6 +408,9 @@ void ZCE_BIN_Init(void) {
     // autoexec.bat must start TuyaMCU before ZCE_BIN.
     zceKickTuyaMCU(true);
 
+    // Start the single cloud inbound command path (/ws/device).
+    ZCE_WS_CMD_Init();
+
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN,
         "ZCE_BIN: init OK device_id=%s", g_deviceId);
 }
@@ -402,6 +440,11 @@ void ZCE_BIN_Every1Second(void) {
     uint8_t frame[ZCE_FRAME_SIZE];
     buildBinaryFrame(frame);
     publishBinaryFrame(frame, ZCE_FRAME_SIZE);
+    g_publishTelemetryNow = false;
+
+    if ((g_zce_seconds % 30) == 0) {
+        publishStatusJson();
+    }
 #endif
 }
 
@@ -415,6 +458,7 @@ void ZCE_BIN_RunQuickTick(void) {
 // ZCE_BIN_Stop
 // ============================================================
 void ZCE_BIN_Stop(void) {
+    ZCE_WS_CMD_Stop();
     g_initialized = false;
     addLogAdv(LOG_INFO, LOG_FEATURE_MAIN, "ZCE_BIN: stopped");
 }
