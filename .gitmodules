@@ -1,30 +1,30 @@
 [submodule "sdk/OpenXR809"]
 	path = sdk/OpenXR809
-	url = https://github.com/zce/OpenXR809.git
+	url = https://github.com/openshwprojects/OpenXR809.git
 	branch = master
-[submodule "sdk/ZCE_EM7231T"]
-	path = sdk/ZCE_EM7231T
-	url = https://github.com/zce/ZCE_EM7231T.git
+[submodule "sdk/OpenBK7231T"]
+	path = sdk/OpenBK7231T
+	url = https://github.com/openshwprojects/OpenBK7231T.git
 	branch = master
-[submodule "sdk/ZCE_EM7231N"]
-	path = sdk/ZCE_EM7231N
-	url = https://github.com/zce/ZCE_EM7231N.git
+[submodule "sdk/OpenBK7231N"]
+	path = sdk/OpenBK7231N
+	url = https://github.com/openshwprojects/OpenBK7231N.git
 	branch = master
 [submodule "sdk/OpenBL602"]
 	path = sdk/OpenBL602
-	url = https://github.com/zce/OpenBL602.git
+	url = https://github.com/openshwprojects/OpenBL602.git
 	branch = master
 [submodule "sdk/OpenW800"]
 	path = sdk/OpenW800
-	url = https://github.com/zce/OpenW800.git
+	url = https://github.com/openshwprojects/OpenW800.git
 	branch = master
 [submodule "sdk/OpenW600"]
 	path = sdk/OpenW600
-	url = https://github.com/zce/OpenW600.git
+	url = https://github.com/openshwprojects/OpenW600.git
 	branch = master
 [submodule "sdk/OpenLN882H"]
 	path = sdk/OpenLN882H
-	url = https://github.com/zce/OpenLN882H.git
+	url = https://github.com/openshwprojects/OpenLN882H.git
 [submodule "sdk/esp-idf"]
 	path = sdk/esp-idf
 	url = https://github.com/espressif/esp-idf.git
@@ -59,11 +59,11 @@
 	branch = master
 [submodule "sdk/OpenXR872"]
 	path = sdk/OpenXR872
-	url = https://github.com/zce/OpenXR872
+	url = https://github.com/openshwprojects/OpenXR872
 	branch = main
 [submodule "sdk/OpenXR806"]
 	path = sdk/OpenXR806
-	url = https://github.com/zce/OpenXR806
+	url = https://github.com/openshwprojects/OpenXR806
 	branch = master
 [submodule "sdk/OpenESP8266"]
 	path = sdk/OpenESP8266
